@@ -1,0 +1,73 @@
+{
+  "calendar_cache_timezone_token_v1": "1:480",
+  "app_settings_v1": {
+    "progress_concurrency": 10,
+    "cover_cache_concurrency": 12,
+    "api_user_agent": "OlvSilence/my-private-project",
+    "theme_mode_v1": "dark",
+    "appbar_background_image_enabled": true,
+    "appbar_background_image_path": "https://static.prts.wiki/charinfo/PRTS_6thStyle/bkg7.png",
+    "timezone_conversion_enabled": true,
+    "timezone_offset_minutes": 480
+  },
+  "watchlist": [
+    {
+      "subject_id": "377130",
+      "subject_url": "https://bangumi.tv/subject/377130",
+      "name_cn": "尖帽子的魔法工房",
+      "name_origin": "とんがり帽子のアトリエ",
+      "cover_url": "",
+      "update_time": "23:00"
+    },
+    {
+      "subject_id": "547888",
+      "subject_url": "https://bangumi.tv/subject/547888",
+      "name_cn": "Re：从零开始的异世界生活 第四季 丧失篇",
+      "name_origin": "Re:ゼロから始める異世界生活 4th season 喪失編",
+      "cover_url": "",
+      "update_time": "23:00"
+    },
+    {
+      "subject_id": "508004",
+      "subject_url": "https://bangumi.tv/subject/508004",
+      "name_cn": "石纪元 科学与未来 第3部分",
+      "name_origin": "Dr.STONE SCIENCE FUTURE 第3クール",
+      "cover_url": "",
+      "update_time": "22:00"
+    },
+    {
+      "subject_id": "535669",
+      "subject_url": "https://bangumi.tv/subject/535669",
+      "name_cn": "冰之城墙",
+      "name_origin": "氷の城壁",
+      "cover_url": "",
+      "update_time": "23:56"
+    },
+    {
+      "subject_id": "515594",
+      "subject_url": "https://bangumi.tv/subject/515594",
+      "name_cn": "关于我转生变成史莱姆这档事 第四季",
+      "name_origin": "転生したらスライムだった件 第4期",
+      "cover_url": "",
+      "update_time": "23:00"
+    },
+    {
+      "subject_id": "543360",
+      "subject_url": "https://bangumi.tv/subject/543360",
+      "name_cn": "上伊那牡丹，酒醉身姿似百合花般",
+      "name_origin": "上伊那ぼたん、酔へる姿は百合の花",
+      "cover_url": "",
+      "update_time": "00:00"
+    },
+    {
+      "subject_id": "568572",
+      "subject_url": "https://bangumi.tv/subject/568572",
+      "name_cn": "黄泉使者",
+      "name_origin": "黄泉のツガイ",
+      "cover_url": "",
+      "update_time": "23:30"
+    }
+  ],
+  "progress_corrections_v1": {},
+  "progress_correction_deltas_v1": {}
+}

@@ -1,0 +1,44 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Flutter: App (Debug)",
+            "request": "launch",
+            "type": "dart",
+            "program": "lib/main.dart",
+            "cwd": "${workspaceFolder}",
+            "templateFor": ""
+        },
+        {
+            "name": "Flutter: App (Profile)",
+            "request": "launch",
+            "type": "dart",
+            "program": "lib/main.dart",
+            "cwd": "${workspaceFolder}",
+            "flutterMode": "profile"
+        },
+        {
+            "name": "Flutter: App (Release)",
+            "request": "launch",
+            "type": "dart",
+            "program": "lib/main.dart",
+            "cwd": "${workspaceFolder}",
+            "flutterMode": "release"
+        },
+        {
+            "name": "Flutter: Current Test File",
+            "request": "launch",
+            "type": "dart",
+            "cwd": "${workspaceFolder}",
+            "templateFor": "test",
+            "program": "${file}"
+        },
+        {
+            "name": "Flutter: widget_test.dart",
+            "request": "launch",
+            "type": "dart",
+            "cwd": "${workspaceFolder}",
+            "program": "test/widget_test.dart"
+        }
+    ]
+}
