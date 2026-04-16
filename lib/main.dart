@@ -97,12 +97,12 @@ class BroadcastTimeConverter {
   static const int minTimezoneOffsetMinutes = -12 * 60;
   static const int maxTimezoneOffsetMinutes = 14 * 60;
 
-  /// 处理 normalizeTimezoneOffsetMinutes 相关逻辑。
+  
   static int normalizeTimezoneOffsetMinutes(int value) {
     return value.clamp(minTimezoneOffsetMinutes, maxTimezoneOffsetMinutes);
   }
 
-  /// 处理 formatUtcOffsetLabel 相关逻辑。
+  
   static String formatUtcOffsetLabel(int offsetMinutes) {
     final int normalized = normalizeTimezoneOffsetMinutes(offsetMinutes);
     final String sign = normalized >= 0 ? '+' : '-';
@@ -115,7 +115,7 @@ class BroadcastTimeConverter {
     return 'UTC$sign$hour:${minute.toString().padLeft(2, '0')}';
   }
 
-  /// 处理 weekdayToIndex 相关逻辑。
+  
   static int? weekdayToIndex(String weekdayText) {
     final String value = weekdayText.trim();
     if (value.isEmpty) {
@@ -129,24 +129,24 @@ class BroadcastTimeConverter {
     return null;
   }
 
-  /// 处理 weekdayFromIndex 相关逻辑。
+  
   static String weekdayFromIndex(int index) {
     final int wrapped = _wrapWeekday(index);
     return weekdayMap[wrapped] ?? '星期一';
   }
 
-  /// 处理 _wrapWeekday 相关逻辑。
+  
   static int _wrapWeekday(int value) {
     return _positiveMod(value - 1, 7) + 1;
   }
 
-  /// 处理 _positiveMod 相关逻辑。
+  
   static int _positiveMod(int value, int modulo) {
     final int result = value % modulo;
     return result < 0 ? result + modulo : result;
   }
 
-  /// 处理 _floorDiv 相关逻辑。
+  
   static int _floorDiv(int value, int divisor) {
     if (divisor == 0) {
       throw ArgumentError('divisor cannot be zero');
@@ -158,7 +158,7 @@ class BroadcastTimeConverter {
     return -(((-value) + positiveDivisor - 1) ~/ positiveDivisor);
   }
 
-  /// 处理 parseClockMinutes 相关逻辑。
+  
   static int? parseClockMinutes(String timeText, {int maxHour = 47}) {
     final RegExpMatch? match = RegExp(
       r'^(\d{1,2}):(\d{2})$',
@@ -177,7 +177,7 @@ class BroadcastTimeConverter {
     return hour * 60 + minute;
   }
 
-  /// 处理 formatClockMinutes 相关逻辑。
+  
   static String formatClockMinutes(int minutes) {
     final int normalized = _positiveMod(minutes, 24 * 60);
     final int hour = normalized ~/ 60;
@@ -222,6 +222,7 @@ class BroadcastTimeConverter {
     required DateTime airdateJst,
     required String displayTime,
     required int displayOffsetMinutes,
+    String displayWeekday = '',
   }) {
     final int? displayMinutesRaw = parseClockMinutes(displayTime);
     if (displayMinutesRaw == null) {
@@ -245,13 +246,25 @@ class BroadcastTimeConverter {
       airdateJst.day,
     ).add(Duration(days: jstDayCarry));
     final DateTime jstMoment = jstDate.add(Duration(minutes: jstMinuteInDay));
-    return jstMoment.add(
+    DateTime displayMoment = jstMoment.add(
       Duration(minutes: normalizedDisplayOffset - jstOffsetMinutes),
     );
+
+    final int? expectedWeekday = weekdayToIndex(displayWeekday);
+    if (expectedWeekday == null) {
+      return displayMoment;
+    }
+
+    final int forward = (expectedWeekday - displayMoment.weekday + 7) % 7;
+    final int backward = forward - 7;
+    final int shiftDays =
+        forward.abs() <= backward.abs() ? forward : backward;
+    displayMoment = displayMoment.add(Duration(days: shiftDays));
+    return displayMoment;
   }
 }
 
-/// 处理 _styleWithWeight 相关逻辑。
+
 TextStyle _styleWithWeight(TextStyle? base, FontWeight weight) {
   return (base ?? const TextStyle()).copyWith(
     fontFamilyFallback: sansFallbacks,
@@ -267,19 +280,19 @@ class _BottomEdgeOnlyClipper extends CustomClipper<Rect> {
   static const double _topAllowance = 4096;
 
   @override
-  /// 处理 getClip 相关逻辑。
+  
   Rect getClip(Size size) {
     return Rect.fromLTRB(0, -_topAllowance, size.width, size.height);
   }
 
   @override
-  /// 处理 shouldReclip 相关逻辑。
+  
   bool shouldReclip(covariant CustomClipper<Rect> oldClipper) {
     return false;
   }
 }
 
-/// 处理 buildUnifiedTextTheme 相关逻辑。
+
 TextTheme buildUnifiedTextTheme(TextTheme base) {
   return base.copyWith(
     displayLarge: _styleWithWeight(base.displayLarge, FontWeight.w600),
@@ -300,7 +313,7 @@ TextTheme buildUnifiedTextTheme(TextTheme base) {
   );
 }
 
-/// 处理 themeModeFromStorageValue 相关逻辑。
+
 ThemeMode themeModeFromStorageValue(String raw) {
   switch (raw.trim().toLowerCase()) {
     case 'light':
@@ -312,7 +325,7 @@ ThemeMode themeModeFromStorageValue(String raw) {
   }
 }
 
-/// 处理 themeModeToStorageValue 相关逻辑。
+
 String themeModeToStorageValue(ThemeMode mode) {
   switch (mode) {
     case ThemeMode.light:
@@ -324,7 +337,7 @@ String themeModeToStorageValue(ThemeMode mode) {
   }
 }
 
-/// 处理 themeModeDisplayText 相关逻辑。
+
 String themeModeDisplayText(ThemeMode mode) {
   switch (mode) {
     case ThemeMode.system:
@@ -336,7 +349,7 @@ String themeModeDisplayText(ThemeMode mode) {
   }
 }
 
-/// 处理 buildAppTheme 相关逻辑。
+
 ThemeData buildAppTheme(Brightness brightness) {
   final ThemeData base = ThemeData(useMaterial3: true, brightness: brightness);
   final ColorScheme colorScheme = ColorScheme.fromSeed(
@@ -439,7 +452,7 @@ class _BangumiAppState extends State<BangumiApp> {
     });
   }
 
-  /// 处理 _onThemeModeChanged 相关逻辑。
+  
   void _onThemeModeChanged(ThemeMode mode) {
     if (_themeMode == mode) {
       return;
@@ -487,7 +500,7 @@ class SubjectItem {
   final String updateTime;
   final String localCoverPath;
 
-  /// 处理 _readJsonString 相关逻辑。
+  
   static String _readJsonString(dynamic value) {
     if (value == null) {
       return '';
@@ -529,7 +542,7 @@ class SubjectItem {
     );
   }
 
-  /// 处理 toJson 相关逻辑。
+  
   Map<String, dynamic> toJson() {
     return <String, dynamic>{
       'subject_id': subjectId,
@@ -561,7 +574,7 @@ class DaySchedule {
     );
   }
 
-  /// 处理 toJson 相关逻辑。
+  
   Map<String, dynamic> toJson() {
     return <String, dynamic>{
       'weekday': weekday,
@@ -681,7 +694,7 @@ class CoverCacheManager {
 
   Directory? _cacheDir;
 
-  /// 处理 _resolveCacheBaseDir 相关逻辑。
+  
   Directory _resolveCacheBaseDir() {
     // Always persist under the workspace/project directory.
     return Directory.current;
@@ -711,7 +724,7 @@ class CoverCacheManager {
     return !await cacheDir.exists();
   }
 
-  /// 处理 _fileExtFromUrl 相关逻辑。
+  
   String _fileExtFromUrl(String imageUrl) {
     final Uri? uri = Uri.tryParse(imageUrl);
     if (uri == null) {
@@ -805,7 +818,7 @@ class CalendarCacheManager {
 
   File? _cacheFile;
 
-  /// 处理 _resolveCalendarCacheDir 相关逻辑。
+  
   Directory _resolveCalendarCacheDir() {
     // Always persist under the workspace/project directory.
     return Directory.current;
@@ -858,7 +871,7 @@ class CalendarCacheManager {
 class AppStateStore {
   static const String _stateFileName = 'app_state.json';
 
-  /// 处理 _resolveStateFile 相关逻辑。
+  
   File _resolveStateFile() {
     return File(
       '${Directory.current.path}${Platform.pathSeparator}$_stateFileName',
@@ -945,7 +958,7 @@ class WatchArchiveEntry {
     );
   }
 
-  /// 处理 toJson 相关逻辑。
+  
   Map<String, dynamic> toJson() {
     return <String, dynamic>{
       'subject_id': subjectId,
@@ -962,7 +975,7 @@ class WatchArchiveEntry {
 class WatchArchiveStore {
   static const String _archiveFileName = 'watch_archive.json';
 
-  /// 处理 _resolveArchiveFile 相关逻辑。
+  
   File _resolveArchiveFile() {
     return File(
       '${Directory.current.path}${Platform.pathSeparator}$_archiveFileName',
@@ -1031,7 +1044,7 @@ class BangumiService {
 
   ValueNotifier<int> get activeRequests => _activeRequests;
 
-  /// 处理 _logNetwork 相关逻辑。
+  
   void _logNetwork(String message) {
     onNetworkLog?.call('网络: $message');
   }
@@ -1046,7 +1059,7 @@ class BangumiService {
         'Accept': 'application/json',
       };
 
-  /// 处理 _describeUrl 相关逻辑。
+  
   String _describeUrl(String rawUrl) {
     try {
       final Uri uri = Uri.parse(rawUrl);
@@ -1068,7 +1081,7 @@ class BangumiService {
     }
   }
 
-  /// 处理 _waitForRequestSlot 相关逻辑。
+  
   Future<void> _waitForRequestSlot() {
     _requestQueue = _requestQueue.then((_) async {
       final Duration elapsed = DateTime.now().difference(_lastRequestAt);
@@ -1080,7 +1093,7 @@ class BangumiService {
     return _requestQueue;
   }
 
-  /// 处理 _normalizeImageUrl 相关逻辑。
+  
   String _normalizeImageUrl(String raw) {
     final String value = raw.trim();
     if (value.isEmpty) {
@@ -1128,7 +1141,7 @@ class BangumiService {
     return value;
   }
 
-  /// 处理 _extractImageUrlFromElement 相关逻辑。
+  
   String _extractImageUrlFromElement(dom.Element node) {
     final String directSrc =
         node.attributes['src']?.trim() ??
@@ -1171,7 +1184,7 @@ class BangumiService {
     return '';
   }
 
-  /// 处理 _extractCoverUrlFromNode 相关逻辑。
+  
   String _extractCoverUrlFromNode(dom.Element animeNode) {
     final List<String> selectors = <String>[
       'a.thumbTip',
@@ -1368,7 +1381,7 @@ class BangumiService {
     return _getWithRetry(bgmListOnAirApiUrl, purpose: '抓取 BGMLIST 全部番组 JSON');
   }
 
-  /// 处理 _toJstTimeFromIso 相关逻辑。
+  
   String _toJstTimeFromIso(String isoText) {
     if (isoText.isEmpty) {
       return '';
@@ -1384,7 +1397,7 @@ class BangumiService {
     }
   }
 
-  /// 处理 _extractJstTimeFromBgmListItem 相关逻辑。
+  
   String _extractJstTimeFromBgmListItem(Map<String, dynamic> item) {
     final String broadcast = (item['broadcast'] as String? ?? '').trim();
     if (broadcast.isNotEmpty) {
@@ -1401,7 +1414,7 @@ class BangumiService {
     return _toJstTimeFromIso(begin);
   }
 
-  /// 处理 _extractJpTitlesFromBgmListItem 相关逻辑。
+  
   Iterable<String> _extractJpTitlesFromBgmListItem(Map<String, dynamic> item) {
     final Set<String> titles = <String>{};
 
@@ -1426,7 +1439,7 @@ class BangumiService {
     return titles.toList(growable: false);
   }
 
-  /// 处理 parseBgmListOnAirEntries 相关逻辑。
+  
   List<BgmListOnAirEntry> parseBgmListOnAirEntries(String jsonText) {
     if (jsonText.trim().isEmpty) {
       return <BgmListOnAirEntry>[];
@@ -1470,7 +1483,7 @@ class BangumiService {
     }
   }
 
-  /// 处理 _extractSubjectId 相关逻辑。
+  
   String _extractSubjectId(String input) {
     final String trimmed = input.trim();
     if (trimmed.isEmpty) {
@@ -1499,7 +1512,7 @@ class BangumiService {
     return '';
   }
 
-  /// 处理 _readString 相关逻辑。
+  
   String _readString(dynamic value) {
     if (value == null) {
       return '';
@@ -1508,7 +1521,7 @@ class BangumiService {
     return text == 'null' ? '' : text;
   }
 
-  /// 处理 _readInt 相关逻辑。
+  
   int? _readInt(dynamic value) {
     if (value == null) {
       return null;
@@ -1522,7 +1535,7 @@ class BangumiService {
     return int.tryParse(value.toString().trim());
   }
 
-  /// 处理 _readDouble 相关逻辑。
+  
   double? _readDouble(dynamic value) {
     if (value == null) {
       return null;
@@ -1533,7 +1546,7 @@ class BangumiService {
     return double.tryParse(value.toString().trim());
   }
 
-  /// 处理 _readDate 相关逻辑。
+  
   DateTime? _readDate(String rawDate) {
     final String value = rawDate.trim();
     if (value.isEmpty) {
@@ -1546,7 +1559,7 @@ class BangumiService {
     }
   }
 
-  /// 处理 _pickBestImageUrlFromSubjectApi 相关逻辑。
+  
   String _pickBestImageUrlFromSubjectApi(Map<String, dynamic> subjectJson) {
     final dynamic imagesRaw = subjectJson['images'];
     if (imagesRaw is! Map<String, dynamic>) {
@@ -1618,6 +1631,7 @@ class BangumiService {
   Future<SubjectProgress?> _tryFetchSubjectProgressViaApi(
     String targetUrl, {
     String scheduleTime = '',
+    String scheduleWeekday = '',
     int displayTimezoneOffsetMinutes = BroadcastTimeConverter.jstOffsetMinutes,
   }
   ) async {
@@ -1691,6 +1705,7 @@ class BangumiService {
           airdateJst: DateTime(airdate.year, airdate.month, airdate.day),
           displayTime: scheduleTime,
           displayOffsetMinutes: normalizedDisplayOffset,
+          displayWeekday: scheduleWeekday,
         );
 
         if (airedAtInDisplay != null) {
@@ -1773,11 +1788,13 @@ class BangumiService {
   Future<SubjectProgress> fetchSubjectProgress(
     String targetUrl, {
     String scheduleTime = '',
+    String scheduleWeekday = '',
     int displayTimezoneOffsetMinutes = BroadcastTimeConverter.jstOffsetMinutes,
   }) async {
     final SubjectProgress? apiProgress = await _tryFetchSubjectProgressViaApi(
       targetUrl,
       scheduleTime: scheduleTime,
+      scheduleWeekday: scheduleWeekday,
       displayTimezoneOffsetMinutes: displayTimezoneOffsetMinutes,
     );
     if (apiProgress != null) {
@@ -1803,7 +1820,7 @@ class BangumiService {
     return _pickBestImageUrlFromSubjectApi(subject);
   }
 
-  /// 处理 parseDailySchedule 相关逻辑。
+  
   List<DaySchedule> parseDailySchedule(String pageText) {
     final dom.Document document = html_parser.parse(pageText);
     final dom.Element? calendar = document.querySelector(
@@ -1872,7 +1889,7 @@ class BangumiService {
     return schedules;
   }
 
-  /// 处理 parseSubjectBasicInfo 相关逻辑。
+  
   SubjectBasicInfo parseSubjectBasicInfo(String subjectPageText) {
     final dom.Document document = html_parser.parse(subjectPageText);
     int? totalEpsDeclared;
@@ -1906,7 +1923,7 @@ class BangumiService {
     );
   }
 
-  /// 处理 parseSubjectDiscussionCountByEpId 相关逻辑。
+  
   Map<String, int> parseSubjectDiscussionCountByEpId(String subjectPageText) {
     final dom.Document document = html_parser.parse(subjectPageText);
     final Map<String, int> result = <String, int>{};
@@ -1945,7 +1962,7 @@ class BangumiService {
     return result;
   }
 
-  /// 处理 parseSubjectCnTitleByEpId 相关逻辑。
+  
   Map<String, String> parseSubjectCnTitleByEpId(String subjectPageText) {
     final dom.Document document = html_parser.parse(subjectPageText);
     final Map<String, String> result = <String, String>{};
@@ -2228,7 +2245,7 @@ class _BangumiHomePageState extends State<BangumiHomePage> {
     super.dispose();
   }
 
-  /// 处理 _onNetworkActivityChanged 相关逻辑。
+  
   void _onNetworkActivityChanged() {
     final int activeCount = _service.activeRequests.value;
     if (_lastLoggedActiveRequests != activeCount) {
@@ -2293,7 +2310,7 @@ class _BangumiHomePageState extends State<BangumiHomePage> {
     });
   }
 
-  /// 处理 _debugTimestamp 相关逻辑。
+  
   String _debugTimestamp() {
     final DateTime now = DateTime.now();
     final String hh = now.hour.toString().padLeft(2, '0');
@@ -2302,7 +2319,7 @@ class _BangumiHomePageState extends State<BangumiHomePage> {
     return '$hh:$mm:$ss';
   }
 
-  /// 处理 _appendDebugLog 相关逻辑。
+  
   void _appendDebugLog(String message) {
     _debugLogs.add('[${_debugTimestamp()}] $message');
     if (_debugLogs.length > _maxDebugLogEntries) {
@@ -2336,17 +2353,17 @@ class _BangumiHomePageState extends State<BangumiHomePage> {
     await _refreshProgress();
   }
 
-  /// 处理 _clampProgressConcurrency 相关逻辑。
+  
   int _clampProgressConcurrency(int value) {
     return value.clamp(1, 30);
   }
 
-  /// 处理 _clampCoverCacheConcurrency 相关逻辑。
+  
   int _clampCoverCacheConcurrency(int value) {
     return value.clamp(1, 24);
   }
 
-  /// 处理 _clampTimezoneOffsetMinutes 相关逻辑。
+  
   int _clampTimezoneOffsetMinutes(int value) {
     return BroadcastTimeConverter.normalizeTimezoneOffsetMinutes(value);
   }
@@ -2361,7 +2378,7 @@ class _BangumiHomePageState extends State<BangumiHomePage> {
       ? BroadcastTimeConverter.formatUtcOffsetLabel(_settingTimezoneOffsetMinutes)
       : 'JST (${BroadcastTimeConverter.formatUtcOffsetLabel(BroadcastTimeConverter.jstOffsetMinutes)})';
 
-  /// 处理 _calendarCacheTimezoneToken 相关逻辑。
+  
   String _calendarCacheTimezoneToken() {
     return '${_settingTimezoneConversionEnabled ? 1 : 0}:$_effectiveDisplayTimezoneOffsetMinutes';
   }
@@ -2565,12 +2582,12 @@ class _BangumiHomePageState extends State<BangumiHomePage> {
     _progressCorrectionMigrationDirty = false;
   }
 
-  /// 处理 _resolveTheoreticalAiredEp 相关逻辑。
+  
   int _resolveTheoreticalAiredEp(SubjectProgress progress) {
     return math.max(0, progress.latestAiredEp ?? progress.airedEps ?? 0);
   }
 
-  /// 处理 _clampCorrectedEp 相关逻辑。
+  
   int _clampCorrectedEp(int value, int? totalEps) {
     if (totalEps == null) {
       return math.max(0, value);
@@ -3051,7 +3068,7 @@ class _BangumiHomePageState extends State<BangumiHomePage> {
     await _appStateStore.writeState(state);
   }
 
-  /// 处理 _currentQuarterLabel 相关逻辑。
+  
   String _currentQuarterLabel() {
     final DateTime now = DateTime.now();
     final int quarterStartMonth = ((now.month - 1) ~/ 3) * 3 + 1;
@@ -3268,7 +3285,7 @@ class _BangumiHomePageState extends State<BangumiHomePage> {
     }
   }
 
-  /// 处理 _resolveTodayItemsFromSchedule 相关逻辑。
+  
   List<SubjectItem> _resolveTodayItemsFromSchedule(List<DaySchedule> schedule) {
     return schedule
         .where((DaySchedule day) => day.weekday == _effectiveTodayWeekday)
@@ -3276,7 +3293,7 @@ class _BangumiHomePageState extends State<BangumiHomePage> {
         .toList();
   }
 
-  /// 处理 _normalizeTitleStrict 相关逻辑。
+  
   String _normalizeTitleStrict(String raw) {
     String value = raw.toLowerCase();
     value = value
@@ -3286,7 +3303,7 @@ class _BangumiHomePageState extends State<BangumiHomePage> {
     return value;
   }
 
-  /// 处理 _normalizeTitleLoose 相关逻辑。
+  
   String _normalizeTitleLoose(String raw) {
     String value = raw.toLowerCase();
     value = value.replaceAll(RegExp(r'第\s*\d+\s*[期季]'), '');
@@ -3304,11 +3321,11 @@ class _BangumiHomePageState extends State<BangumiHomePage> {
     return value;
   }
 
-  /// 处理 _buildLooseNameCandidates 相关逻辑。
+  
   List<String> _buildLooseNameCandidates(String raw) {
     final Set<String> candidates = <String>{};
 
-    /// 处理 push 相关逻辑。
+    
     void push(String s) {
       final String value = _normalizeTitleLoose(s);
       if (value.length >= 2) {
@@ -3352,7 +3369,7 @@ class _BangumiHomePageState extends State<BangumiHomePage> {
     return candidates.toList();
   }
 
-  /// 处理 _containmentScore 相关逻辑。
+  
   int _containmentScore(String a, String b) {
     if (a.isEmpty || b.isEmpty) {
       return 0;
@@ -3374,13 +3391,13 @@ class _BangumiHomePageState extends State<BangumiHomePage> {
     return shorter * 100 - (longer - shorter);
   }
 
-  /// 处理 _bigramSimilarityScore 相关逻辑。
+  
   int _bigramSimilarityScore(String a, String b) {
     if (a.length < 4 || b.length < 4) {
       return 0;
     }
 
-    /// 处理 toBigrams 相关逻辑。
+    
     Set<String> toBigrams(String value) {
       final Set<String> grams = <String>{};
       for (int i = 0; i < value.length - 1; i++) {
@@ -3419,13 +3436,13 @@ class _BangumiHomePageState extends State<BangumiHomePage> {
     return (jaccard * 1000).round();
   }
 
-  /// 处理 _editSimilarityScore 相关逻辑。
+  
   int _editSimilarityScore(String a, String b) {
     if (a.length < 4 || b.length < 4) {
       return 0;
     }
 
-    /// 处理 levenshtein 相关逻辑。
+    
     int levenshtein(String s, String t) {
       final int n = s.length;
       final int m = t.length;
@@ -3474,7 +3491,7 @@ class _BangumiHomePageState extends State<BangumiHomePage> {
     return (similarity * 900).round();
   }
 
-  /// 处理 _matchBgmListTimeForItem 相关逻辑。
+  
   String _matchBgmListTimeForItem(SubjectItem item) {
     if (_bgmOnAirEntries.isEmpty) {
       return '';
@@ -3596,7 +3613,7 @@ class _BangumiHomePageState extends State<BangumiHomePage> {
     }
   }
 
-  /// 处理 _applyDebugWeekdayOverride 相关逻辑。
+  
   void _applyDebugWeekdayOverride(int? weekday) {
     setState(() {
       _debugWeekdayOverride = weekday;
@@ -4033,7 +4050,7 @@ class _BangumiHomePageState extends State<BangumiHomePage> {
     final int maxParallelWorkers = _settingCoverCacheConcurrency;
     int nextIndex = 0;
 
-    /// 处理 takeNextIndex 相关逻辑。
+    
     int? takeNextIndex() {
       if (nextIndex >= updated.length) {
         return null;
@@ -4043,7 +4060,7 @@ class _BangumiHomePageState extends State<BangumiHomePage> {
       return current;
     }
 
-    /// 处理 applyRealtimeUpdate 相关逻辑。
+    
     void applyRealtimeUpdate(SubjectItem fresh) {
       if (!mounted || fresh.subjectId.isEmpty) {
         return;
@@ -4359,7 +4376,7 @@ class _BangumiHomePageState extends State<BangumiHomePage> {
           MapEntry<String, SubjectItem> a,
           MapEntry<String, SubjectItem> b,
         ) {
-          /// 处理 rankFor 相关逻辑。
+          
           int rankFor(String id) {
             final bool isFollowed = watchTargets.containsKey(id);
             final bool isToday = todayIds.contains(id);
@@ -4421,7 +4438,7 @@ class _BangumiHomePageState extends State<BangumiHomePage> {
     int processed = 0;
     int nextIndex = 0;
 
-    /// 处理 takeNextIndex 相关逻辑。
+    
     int? takeNextIndex() {
       if (nextIndex >= orderedTargets.length) {
         return null;
@@ -4445,6 +4462,7 @@ class _BangumiHomePageState extends State<BangumiHomePage> {
           rawProgress = await _service.fetchSubjectProgress(
             item.subjectUrl,
             scheduleTime: hint?.time ?? '',
+            scheduleWeekday: hint?.weekday ?? '',
             displayTimezoneOffsetMinutes: _effectiveDisplayTimezoneOffsetMinutes,
           );
         } catch (e) {
@@ -4506,7 +4524,7 @@ class _BangumiHomePageState extends State<BangumiHomePage> {
     _showStatus('进度已更新');
   }
 
-  /// 处理 _buildTaskProgressOverlay 相关逻辑。
+  
   Widget _buildTaskProgressOverlay() {
     final bool showStatusText =
         _showStatusText && _statusText.trim().isNotEmpty;
@@ -4589,7 +4607,7 @@ class _BangumiHomePageState extends State<BangumiHomePage> {
     );
   }
 
-  /// 处理 _formatProgress 相关逻辑。
+  
   String _formatProgress(SubjectProgress? progress) {
     if (progress == null) {
       return '进度: 未获取';
@@ -4608,7 +4626,7 @@ class _BangumiHomePageState extends State<BangumiHomePage> {
     return '进度: ${progress.progressText ?? '未知'}$latestText';
   }
 
-  /// 处理 _formatRatingBadge 相关逻辑。
+  
   String _formatRatingBadge(SubjectProgress? progress) {
     final double? score = progress?.ratingScore;
     if (score == null || score <= 0) {
@@ -4674,7 +4692,7 @@ class _BangumiHomePageState extends State<BangumiHomePage> {
     await _refreshProgress(onlySubjectIds: newWatchIds);
   }
 
-  /// 处理 _selectAll 相关逻辑。
+  
   void _selectAll(bool selected) {
     setState(() {
       if (selected) {
@@ -4708,7 +4726,7 @@ class _BangumiHomePageState extends State<BangumiHomePage> {
     }
   }
 
-  /// 处理 _resolveSubjectUri 相关逻辑。
+  
   Uri? _resolveSubjectUri(String raw) {
     final String value = raw.trim();
     if (value.isEmpty) {
@@ -5160,7 +5178,7 @@ class _BangumiHomePageState extends State<BangumiHomePage> {
     );
   }
 
-  /// 处理 _buildCoverPlaceholder 相关逻辑。
+  
   Widget _buildCoverPlaceholder({double width = 54, double height = 72}) {
     return Container(
       width: width,
@@ -5530,7 +5548,7 @@ class _BangumiHomePageState extends State<BangumiHomePage> {
     );
   }
 
-  /// 处理 _buildNetworkActivityIndicator 相关逻辑。
+  
   Widget _buildNetworkActivityIndicator() {
     if (!_showNetworkIndicator) {
       return const SizedBox.shrink();
@@ -5551,7 +5569,7 @@ class _BangumiHomePageState extends State<BangumiHomePage> {
     );
   }
 
-  /// 处理 _buildAppBarLogoLayer 相关逻辑。
+  
   Widget _buildAppBarLogoLayer() {
     final double logoTop =
         -_appBarLogoHeight - _appBarLogoGapAboveTabBar + _appBarLogoOffsetY;
@@ -5584,7 +5602,7 @@ class _BangumiHomePageState extends State<BangumiHomePage> {
     );
   }
 
-  /// 处理 _buildAppBarBottom 相关逻辑。
+  
   PreferredSizeWidget _buildAppBarBottom() {
     return PreferredSize(
       preferredSize: const Size.fromHeight(kTextTabBarHeight),
@@ -5608,7 +5626,7 @@ class _BangumiHomePageState extends State<BangumiHomePage> {
     );
   }
 
-  /// 处理 _shouldShowAppBarBackgroundImage 相关逻辑。
+  
   bool _shouldShowAppBarBackgroundImage() {
     if (!_settingAppBarBackgroundImageEnabled) {
       return false;
@@ -5616,7 +5634,7 @@ class _BangumiHomePageState extends State<BangumiHomePage> {
     return _settingAppBarBackgroundImagePath.trim().isNotEmpty;
   }
 
-  /// 处理 _normalizeBackgroundImageSource 相关逻辑。
+  
   String _normalizeBackgroundImageSource(String raw) {
     String value = raw.trim();
     if (value.startsWith('"') && value.endsWith('"') && value.length >= 2) {
@@ -5635,7 +5653,7 @@ class _BangumiHomePageState extends State<BangumiHomePage> {
         Theme.of(context).appBarTheme.backgroundColor ??
         Theme.of(context).colorScheme.surface;
 
-    /// 处理 buildFallback 相关逻辑。
+    
     Widget buildFallback() {
       return ColoredBox(color: fallbackColor);
     }
@@ -5691,7 +5709,7 @@ class _BangumiHomePageState extends State<BangumiHomePage> {
     );
   }
 
-  /// 处理 _buildAppBarFlexibleBackground 相关逻辑。
+  
   Widget _buildAppBarFlexibleBackground() {
     final bool isDark = Theme.of(context).brightness == Brightness.dark;
     final double overlayAlpha = isDark ? 0.28 : 0.12;
@@ -5720,7 +5738,7 @@ class _BangumiHomePageState extends State<BangumiHomePage> {
     );
   }
 
-  /// 处理 _buildTodayTab 相关逻辑。
+  
   Widget _buildTodayTab() {
     if (_isLoadingSchedule) {
       return const Center(child: CircularProgressIndicator());
@@ -5739,7 +5757,7 @@ class _BangumiHomePageState extends State<BangumiHomePage> {
         .where((SubjectItem item) => !watchIds.contains(item.subjectId))
         .toList();
 
-    /// 处理 compareByUpdateTime 相关逻辑。
+    
     int compareByUpdateTime(SubjectItem a, SubjectItem b) {
       final int aMinutes = _parseUpdateTimeMinutes(a.updateTime);
       final int bMinutes = _parseUpdateTimeMinutes(b.updateTime);
@@ -5869,7 +5887,7 @@ class _BangumiHomePageState extends State<BangumiHomePage> {
       totalEps,
     );
 
-    /// 处理 signedDeltaText 相关逻辑。
+    
     String signedDeltaText(int value) {
       if (value > 0) {
         return '+$value';
@@ -5995,7 +6013,7 @@ class _BangumiHomePageState extends State<BangumiHomePage> {
     _showStatus(confirmed ? '已保存进度修正' : '已清除进度修正');
   }
 
-  /// 处理 _buildWatchTab 相关逻辑。
+  
   Widget _buildWatchTab() {
     final Map<String, String> weekdayBySubjectId = <String, String>{};
     final Map<String, String> updateTimeBySubjectId = <String, String>{};
@@ -6055,7 +6073,7 @@ class _BangumiHomePageState extends State<BangumiHomePage> {
     );
   }
 
-  /// 处理 _buildSelectTab 相关逻辑。
+  
   Widget _buildSelectTab() {
     final String keyword = _searchController.text.trim().toLowerCase();
 
@@ -6143,7 +6161,7 @@ class _BangumiHomePageState extends State<BangumiHomePage> {
     );
   }
 
-  /// 处理 _parseUpdateTimeMinutes 相关逻辑。
+  
   int _parseUpdateTimeMinutes(String text) {
     final RegExpMatch? match = RegExp(r'^(\d{1,2}):(\d{2})$').firstMatch(text);
     if (match == null) {
@@ -6286,7 +6304,7 @@ class _BangumiHomePageState extends State<BangumiHomePage> {
     );
   }
 
-  /// 处理 _buildWeekCalendarPlaceholder 相关逻辑。
+  
   Widget _buildWeekCalendarPlaceholder() {
     return Container(
       width: 108,
@@ -6300,7 +6318,7 @@ class _BangumiHomePageState extends State<BangumiHomePage> {
     );
   }
 
-  /// 处理 _buildWeekCalendarTab 相关逻辑。
+  
   Widget _buildWeekCalendarTab() {
     final ColorScheme colors = Theme.of(context).colorScheme;
     final Set<String> watchIds = _watchlist

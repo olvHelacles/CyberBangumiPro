@@ -53,6 +53,22 @@ void main() {
     expect(displayMoment.minute, 30);
   });
 
+  /// 验证跨日换算时可按预期更新星期对齐显示时刻。
+  test('Resolve episode broadcast time aligns to expected display weekday', () {
+    final DateTime? displayMoment =
+        BroadcastTimeConverter.resolveEpisodeBroadcastInDisplayTime(
+      airdateJst: DateTime(2026, 4, 14),
+      displayTime: '23:30',
+      displayOffsetMinutes: 8 * 60,
+      displayWeekday: '星期一',
+    );
+
+    expect(displayMoment, isNotNull);
+    expect(displayMoment!.weekday, DateTime.monday);
+    expect(displayMoment.hour, 23);
+    expect(displayMoment.minute, 30);
+  });
+
   /// 验证主题模式序列化与反序列化映射稳定。
   test('Theme mode storage mapping is stable', () {
     expect(themeModeFromStorageValue('system'), ThemeMode.system);
