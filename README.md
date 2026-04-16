@@ -78,10 +78,3 @@ flutter test test/widget_test.dart
 - assets/images/：图标、Logo 等资源
 - assets/fonts/：字体资源
 
-
-## 说明
-
-本项目为私有用途工具型应用（publish_to: none），如需二次开发，建议优先保持以下策略：
-
-- 优先使用 UTF-8 直接编辑，避免编码转换导致中文文本损坏
-- 日历与更新时间逻辑改动后，务必执行分析与测试
