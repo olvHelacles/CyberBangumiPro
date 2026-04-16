@@ -1,11 +1,10 @@
-# CyberBangumi Pro
+<img alt="Cover" src="./docs/imgs/cover.png">
 
 CyberBangumi Pro 是一个基于 Flutter 的番剧日历与追番辅助工具，面向桌面端使用场景，聚焦以下目标：
 
 - 自动抓取 Bangumi 周历数据
 - 结合 BGMLIST OnAir JSON 补全放送时刻
 - 管理关注列表并刷新每部番剧的放送进度
-- 本地缓存封面与日历，减少重复请求
 - 支持时区转换，便于按本地时区查看放送信息
 
 ## 核心功能
