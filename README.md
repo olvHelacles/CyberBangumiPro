@@ -79,3 +79,6 @@ flutter test test/widget_test.dart
 - assets/images/：图标、Logo 等资源
 - assets/fonts/：字体资源
 
+<div align=center>
+<img alt="End" src="./docs/imgs/cover2.png">
+</div>
