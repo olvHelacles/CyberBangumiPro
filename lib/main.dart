@@ -2701,6 +2701,14 @@ class _BangumiHomePageState extends State<BangumiHomePage>
     await _refreshProgress();
   }
 
+  Future<void> _refreshCalendarFromMainAction() async {
+    await _refreshCalendarSchedule(forceNetwork: true);
+    if (!mounted) {
+      return;
+    }
+    await _refreshProgressFromMainAction();
+  }
+
   
   int _clampProgressConcurrency(int value) {
     return value.clamp(1, 30);
@@ -7140,9 +7148,9 @@ class _BangumiHomePageState extends State<BangumiHomePage>
             ),
             IconButton(
               tooltip: '刷新日历',
-              onPressed: _isLoadingSchedule
+              onPressed: (_isLoadingSchedule || _isLoadingProgress)
                   ? null
-                  : () => _refreshCalendarSchedule(forceNetwork: true),
+                  : _refreshCalendarFromMainAction,
               icon: const Icon(Icons.calendar_month),
             ),
           ],
