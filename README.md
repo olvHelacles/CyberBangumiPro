@@ -1,6 +1,6 @@
 <img alt="Cover" src="./docs/imgs/logo.png" width = "512">
 
-CyberBangumi Pro 是一个基于 Flutter 的windows端番剧日历与追番辅助工具，聚焦以下目标：
+CyberBangumi Pro 是一个简洁的基于 Flutter 的windows端番剧日历与追番辅助工具，聚焦以下目标：
 
 - 自动抓取 Bangumi 周历数据
 - 结合 BGMLIST OnAir JSON 补全放送时刻
@@ -79,6 +79,8 @@ flutter test test/widget_test.dart
 - assets/images/：图标、Logo 等资源
 - assets/fonts/：字体资源
 
+
+
 <div align=center>
-<img alt="End" src="./docs/imgs/cover2.png">
+<img alt="End" src="./docs/imgs/cover2.png" width=512>
 </div>
