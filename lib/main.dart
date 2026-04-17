@@ -4,6 +4,7 @@ import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:html/dom.dart' as dom;
 import 'package:html/parser.dart' as html_parser;
@@ -90,6 +91,31 @@ class BgmListOnAirEntry {
 
   final String timeJst;
   final List<String> jpTitles;
+}
+
+/// BgmListScheduleCandidate：BGMLIST 直接构建周历所需字段。
+class BgmListScheduleCandidate {
+  const BgmListScheduleCandidate({
+    required this.subjectId,
+    required this.subjectUrl,
+    required this.titleJp,
+    required this.titleCn,
+    required this.coverUrl,
+    required this.weekdayJst,
+    required this.updateTimeJst,
+    required this.beginJst,
+    required this.periodDays,
+  });
+
+  final String subjectId;
+  final String subjectUrl;
+  final String titleJp;
+  final String titleCn;
+  final String coverUrl;
+  final String weekdayJst;
+  final String updateTimeJst;
+  final DateTime beginJst;
+  final int periodDays;
 }
 
 /// BroadcastTimeConverter：组件或数据结构定义。
@@ -411,6 +437,8 @@ Future<void> main() async {
     windowManager.waitUntilReadyToShow(windowOptions, () async {
       await windowManager.show();
       await windowManager.focus();
+      // ignore: invalid_use_of_visible_for_testing_member
+      HardwareKeyboard.instance.clearState();
     });
   }
 
@@ -1458,20 +1486,27 @@ class BangumiService {
     return _getWithRetry(bgmListOnAirApiUrl, purpose: '抓取 BGMLIST 全部番组 JSON');
   }
 
-  
-  String _toJstTimeFromIso(String isoText) {
+  DateTime? _toJstDateTimeFromIso(String isoText) {
     if (isoText.isEmpty) {
-      return '';
+      return null;
     }
     try {
       final DateTime utc = DateTime.parse(isoText).toUtc();
-      final DateTime jst = utc.add(const Duration(hours: 9));
-      final String hh = jst.hour.toString().padLeft(2, '0');
-      final String mm = jst.minute.toString().padLeft(2, '0');
-      return '$hh:$mm';
+      return utc.add(const Duration(hours: 9));
     } catch (_) {
+      return null;
+    }
+  }
+
+  
+  String _toJstTimeFromIso(String isoText) {
+    final DateTime? jst = _toJstDateTimeFromIso(isoText);
+    if (jst == null) {
       return '';
     }
+    final String hh = jst.hour.toString().padLeft(2, '0');
+    final String mm = jst.minute.toString().padLeft(2, '0');
+    return '$hh:$mm';
   }
 
   
@@ -1557,6 +1592,201 @@ class BangumiService {
       return entries;
     } catch (_) {
       return <BgmListOnAirEntry>[];
+    }
+  }
+
+  String _extractBangumiIdFromBgmListItem(Map<String, dynamic> item) {
+    final dynamic sitesRaw = item['sites'];
+    if (sitesRaw is! List) {
+      return '';
+    }
+
+    for (final dynamic siteRaw in sitesRaw) {
+      if (siteRaw is! Map<String, dynamic>) {
+        continue;
+      }
+      final String site = _readString(siteRaw['site']).toLowerCase();
+      if (site == 'bangumi' || site == 'bangumi.tv') {
+        final String id = _readString(siteRaw['id']);
+        if (RegExp(r'^\d+$').hasMatch(id)) {
+          return id;
+        }
+      }
+    }
+
+    return '';
+  }
+
+  String _extractCnTitleFromBgmListItem(Map<String, dynamic> item) {
+    final dynamic titleTranslate = item['titleTranslate'];
+    if (titleTranslate is! Map) {
+      return '';
+    }
+
+    for (final String key in <String>['zh-Hans', 'zh-Hant', 'zh']) {
+      final dynamic raw = titleTranslate[key];
+      if (raw is List) {
+        for (final dynamic one in raw) {
+          final String text = one?.toString().trim() ?? '';
+          if (text.isNotEmpty) {
+            return text;
+          }
+        }
+      }
+    }
+
+    return '';
+  }
+
+  String _extractCoverUrlFromBgmListItem(Map<String, dynamic> item) {
+    final dynamic imagesRaw = item['images'];
+    if (imagesRaw is! Map<String, dynamic>) {
+      return '';
+    }
+
+    for (final String key in <String>[
+      'common',
+      'large',
+      'medium',
+      'small',
+      'grid',
+    ]) {
+      final String url = _normalizeImageUrl(_readString(imagesRaw[key]));
+      if (url.isNotEmpty) {
+        return url;
+      }
+    }
+
+    return '';
+  }
+
+  DateTime? _extractBroadcastStartJstFromBgmListItem(Map<String, dynamic> item) {
+    final String broadcast = _readString(item['broadcast']);
+    if (broadcast.isNotEmpty) {
+      final RegExpMatch? match = RegExp(r'^R/([^/]+)/').firstMatch(broadcast);
+      final DateTime? start = _toJstDateTimeFromIso(
+        (match?.group(1) ?? '').trim(),
+      );
+      if (start != null) {
+        return start;
+      }
+    }
+    return null;
+  }
+
+  DateTime? _extractBeginJstFromBgmListItem(Map<String, dynamic> item) {
+    final String begin = _readString(item['begin']);
+    if (begin.isNotEmpty) {
+      final DateTime? beginJst = _toJstDateTimeFromIso(begin);
+      if (beginJst != null) {
+        return beginJst;
+      }
+    }
+    return _extractBroadcastStartJstFromBgmListItem(item);
+  }
+
+  int? _extractBroadcastPeriodDaysFromBgmListItem(Map<String, dynamic> item) {
+    final String broadcast = _readString(item['broadcast']);
+    if (broadcast.isEmpty) {
+      return null;
+    }
+
+    final RegExpMatch? match = RegExp(r'^R/[^/]+/P(\d+)([DWM])$').firstMatch(
+      broadcast,
+    );
+    if (match == null) {
+      return null;
+    }
+
+    final int? amount = int.tryParse(match.group(1) ?? '');
+    final String unit = match.group(2) ?? '';
+    if (amount == null || amount <= 0) {
+      return null;
+    }
+
+    if (unit == 'D') {
+      return amount;
+    }
+    if (unit == 'W') {
+      return amount * 7;
+    }
+
+    return null;
+  }
+
+  List<BgmListScheduleCandidate> parseBgmListScheduleCandidates(String jsonText) {
+    if (jsonText.trim().isEmpty) {
+      return <BgmListScheduleCandidate>[];
+    }
+
+    try {
+      final dynamic decoded = jsonDecode(jsonText);
+      if (decoded is! Map<String, dynamic>) {
+        return <BgmListScheduleCandidate>[];
+      }
+
+      final dynamic itemsRaw = decoded['items'];
+      if (itemsRaw is! List) {
+        return <BgmListScheduleCandidate>[];
+      }
+
+      final List<BgmListScheduleCandidate> result = <BgmListScheduleCandidate>[];
+      for (final dynamic raw in itemsRaw) {
+        if (raw is! Map<String, dynamic>) {
+          continue;
+        }
+
+        final String subjectId = _extractBangumiIdFromBgmListItem(raw);
+        if (subjectId.isEmpty) {
+          continue;
+        }
+
+        final String titleJp = _readString(raw['title']);
+        if (titleJp.isEmpty) {
+          continue;
+        }
+
+        final DateTime? beginJst = _extractBeginJstFromBgmListItem(raw);
+        if (beginJst == null) {
+          continue;
+        }
+
+        final DateTime? broadcastStartJst =
+            _extractBroadcastStartJstFromBgmListItem(raw);
+        final DateTime weekdaySource = broadcastStartJst ?? beginJst;
+        final String weekdayJst = weekdayMap[weekdaySource.weekday] ?? '';
+        if (weekdayJst.isEmpty) {
+          continue;
+        }
+
+        final String updateTimeJst = _extractJstTimeFromBgmListItem(raw);
+        if (updateTimeJst.isEmpty) {
+          continue;
+        }
+
+        final int? periodDays = _extractBroadcastPeriodDaysFromBgmListItem(raw);
+        if (periodDays == null || periodDays <= 0) {
+          continue;
+        }
+
+        result.add(
+          BgmListScheduleCandidate(
+            subjectId: subjectId,
+            subjectUrl: 'https://bangumi.tv/subject/$subjectId',
+            titleJp: titleJp,
+            titleCn: _extractCnTitleFromBgmListItem(raw),
+            coverUrl: _extractCoverUrlFromBgmListItem(raw),
+            weekdayJst: weekdayJst,
+            updateTimeJst: updateTimeJst,
+            beginJst: beginJst,
+            periodDays: periodDays,
+          ),
+        );
+      }
+
+      return result;
+    } catch (_) {
+      return <BgmListScheduleCandidate>[];
     }
   }
 
@@ -1676,6 +1906,19 @@ class BangumiService {
       return decoded;
     }
     return null;
+  }
+
+  Future<int?> fetchSubjectTotalEpisodes(String subjectId) async {
+    final Map<String, dynamic>? subject = await _fetchSubjectFromApi(subjectId);
+    if (subject == null || subject.isEmpty) {
+      return null;
+    }
+
+    final int? total = _readInt(subject['total_episodes']) ?? _readInt(subject['eps']);
+    if (total == null || total <= 0) {
+      return null;
+    }
+    return total;
   }
 
   Future<List<Map<String, dynamic>>> _fetchMainEpisodesFromApi(
@@ -2186,7 +2429,8 @@ class BangumiHomePage extends StatefulWidget {
 }
 
 /// _BangumiHomePageState：组件或数据结构定义。
-class _BangumiHomePageState extends State<BangumiHomePage> {
+class _BangumiHomePageState extends State<BangumiHomePage>
+  with WidgetsBindingObserver {
   static const String _appBarLogoAsset = 'assets/images/logoWHT.svg';
   static const BoxFit _appBarBackgroundImageFit = BoxFit.cover;
   static const double _appBarLogoWidth = 140;
@@ -2237,6 +2481,9 @@ class _BangumiHomePageState extends State<BangumiHomePage> {
   bool _showNetworkIndicator = false;
   Timer? _networkIndicatorHideTimer;
   List<BgmListOnAirEntry> _bgmOnAirEntries = <BgmListOnAirEntry>[];
+  List<BgmListScheduleCandidate> _bgmScheduleCandidates =
+      <BgmListScheduleCandidate>[];
+  final Map<String, int?> _subjectTotalEpisodesCache = <String, int?>{};
   String _scheduleError = '';
   final List<String> _debugLogs = <String>[];
   int _lastLoggedActiveRequests = -1;
@@ -2291,6 +2538,8 @@ class _BangumiHomePageState extends State<BangumiHomePage> {
   /// 初始化状态、监听与启动流程。
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _resetHardwareKeyboardState('初始化');
     _settingThemeMode = widget.initialThemeMode;
     _appendDebugLog('应用启动');
     _service.onNetworkLog = _appendDebugLog;
@@ -2312,8 +2561,16 @@ class _BangumiHomePageState extends State<BangumiHomePage> {
   }
 
   @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _resetHardwareKeyboardState('恢复前台');
+    }
+  }
+
+  @override
   /// 释放控制器、计时器与监听资源。
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _service.onNetworkLog = null;
     _service.activeRequests.removeListener(_onNetworkActivityChanged);
     _service.dispose();
@@ -2321,6 +2578,16 @@ class _BangumiHomePageState extends State<BangumiHomePage> {
     _statusTextTimer?.cancel();
     _searchController.dispose();
     super.dispose();
+  }
+
+  void _resetHardwareKeyboardState(String reason) {
+    try {
+      // ignore: invalid_use_of_visible_for_testing_member
+      HardwareKeyboard.instance.clearState();
+      _appendDebugLog('键盘状态已重置($reason)');
+    } catch (_) {
+      // Ignore if current backend does not support keyboard state reset.
+    }
   }
 
   
@@ -3277,6 +3544,202 @@ class _BangumiHomePageState extends State<BangumiHomePage> {
     _showStatus(doneStatusText);
   }
 
+  Future<void> _ensureBgmListScheduleCandidatesLoaded({
+    bool forceRefresh = false,
+  }) async {
+    if (!forceRefresh && _bgmScheduleCandidates.isNotEmpty) {
+      return;
+    }
+    if (forceRefresh) {
+      _appendDebugLog('日历: 强制重新抓取 BGMLIST 全部番组 JSON');
+    }
+
+    final String onAirJson = await _service.fetchBgmListOnAirJson();
+    if (onAirJson.trim().isEmpty) {
+      _bgmScheduleCandidates = <BgmListScheduleCandidate>[];
+      return;
+    }
+
+    final List<BgmListScheduleCandidate> parsed =
+        _service.parseBgmListScheduleCandidates(onAirJson);
+    _bgmScheduleCandidates = parsed;
+    _appendDebugLog('日历: BGMLIST 候选条目 ${parsed.length} 条');
+  }
+
+  Future<int?> _loadSubjectTotalEpisodesCached(String subjectId) async {
+    if (subjectId.isEmpty) {
+      return null;
+    }
+    if (_subjectTotalEpisodesCache.containsKey(subjectId)) {
+      return _subjectTotalEpisodesCache[subjectId];
+    }
+
+    try {
+      final int? total = await _service.fetchSubjectTotalEpisodes(subjectId);
+      _subjectTotalEpisodesCache[subjectId] = total;
+      return total;
+    } catch (e) {
+      _appendDebugLog('日历: 获取总集数失败 subject=$subjectId ($e)');
+      _subjectTotalEpisodesCache[subjectId] = null;
+      return null;
+    }
+  }
+
+  Future<bool> _isCurrentSeasonCandidate(
+    BgmListScheduleCandidate candidate,
+    DateTime nowJst,
+  ) async {
+    final int? totalEpisodes = await _loadSubjectTotalEpisodesCached(
+      candidate.subjectId,
+    );
+    if (totalEpisodes == null || totalEpisodes <= 0) {
+      _appendDebugLog('日历: 跳过 ${candidate.subjectId}，Bangumi API 总集数缺失');
+      return false;
+    }
+
+    final int spanDays = candidate.periodDays * math.max(0, totalEpisodes - 1);
+    final DateTime estimatedEnd = candidate.beginJst.add(
+      Duration(days: spanDays),
+    );
+    return !nowJst.isBefore(candidate.beginJst) && !nowJst.isAfter(estimatedEnd);
+  }
+
+  Future<List<BgmListScheduleCandidate>> _resolveCurrentSeasonCandidates(
+    List<BgmListScheduleCandidate> source,
+  ) async {
+    if (source.isEmpty) {
+      return <BgmListScheduleCandidate>[];
+    }
+
+    final DateTime nowJst = DateTime.now().toUtc().add(
+      const Duration(hours: 9),
+    );
+    final Map<String, BgmListScheduleCandidate> uniqueById =
+        <String, BgmListScheduleCandidate>{};
+    for (final BgmListScheduleCandidate item in source) {
+      uniqueById.putIfAbsent(item.subjectId, () => item);
+    }
+    final List<BgmListScheduleCandidate> candidates = uniqueById.values
+        .where((BgmListScheduleCandidate item) =>
+            !item.beginJst.isAfter(nowJst) &&
+            item.periodDays > 0 &&
+            item.weekdayJst.trim().isNotEmpty &&
+            item.updateTimeJst.trim().isNotEmpty)
+        .toList();
+
+    if (candidates.isEmpty) {
+      return <BgmListScheduleCandidate>[];
+    }
+
+    final List<BgmListScheduleCandidate> included = <BgmListScheduleCandidate>[];
+    final int concurrency = math.max(
+      1,
+      math.min(_settingProgressConcurrency, 12),
+    );
+    int nextIndex = 0;
+
+    int? takeNextIndex() {
+      if (nextIndex >= candidates.length) {
+        return null;
+      }
+      final int current = nextIndex;
+      nextIndex += 1;
+      return current;
+    }
+
+    Future<void> worker() async {
+      while (true) {
+        final int? i = takeNextIndex();
+        if (i == null) {
+          return;
+        }
+
+        final BgmListScheduleCandidate candidate = candidates[i];
+        final bool include = await _isCurrentSeasonCandidate(candidate, nowJst);
+        if (include) {
+          included.add(candidate);
+        }
+      }
+    }
+
+    final int workerCount = math.min(concurrency, candidates.length);
+    await Future.wait(
+      List<Future<void>>.generate(workerCount, (_) => worker()),
+    );
+
+    return included;
+  }
+
+  List<DaySchedule> _buildScheduleFromCandidates(
+    List<BgmListScheduleCandidate> candidates,
+  ) {
+    const List<String> orderedWeekdays = <String>[
+      '星期一',
+      '星期二',
+      '星期三',
+      '星期四',
+      '星期五',
+      '星期六',
+      '星期日',
+    ];
+    final Map<String, List<SubjectItem>> grouped = <String, List<SubjectItem>>{
+      for (final String day in orderedWeekdays) day: <SubjectItem>[],
+    };
+
+    for (final BgmListScheduleCandidate candidate in candidates) {
+      if (!grouped.containsKey(candidate.weekdayJst)) {
+        continue;
+      }
+
+      grouped[candidate.weekdayJst]!.add(
+        SubjectItem(
+          subjectId: candidate.subjectId,
+          subjectUrl: candidate.subjectUrl,
+          nameCn: candidate.titleCn,
+          nameOrigin: candidate.titleJp,
+          coverUrl: candidate.coverUrl,
+          updateTime: candidate.updateTimeJst,
+        ),
+      );
+    }
+
+    final List<DaySchedule> schedule = <DaySchedule>[];
+    for (final String weekday in orderedWeekdays) {
+      final List<SubjectItem> items = grouped[weekday] ?? <SubjectItem>[];
+      if (items.isEmpty) {
+        continue;
+      }
+      items.sort((SubjectItem a, SubjectItem b) {
+        final int timeCompare = _parseUpdateTimeMinutes(
+          a.updateTime,
+        ).compareTo(_parseUpdateTimeMinutes(b.updateTime));
+        if (timeCompare != 0) {
+          return timeCompare;
+        }
+        return a.displayName.toLowerCase().compareTo(
+          b.displayName.toLowerCase(),
+        );
+      });
+      schedule.add(DaySchedule(weekday: weekday, items: items));
+    }
+
+    return schedule;
+  }
+
+  Future<List<DaySchedule>> _buildScheduleFromBgmListApi({
+    bool forceRefresh = false,
+  }) async {
+    await _ensureBgmListScheduleCandidatesLoaded(forceRefresh: forceRefresh);
+    if (_bgmScheduleCandidates.isEmpty) {
+      return <DaySchedule>[];
+    }
+
+    final List<BgmListScheduleCandidate> currentSeason =
+        await _resolveCurrentSeasonCandidates(_bgmScheduleCandidates);
+    _appendDebugLog('日历: BGMLIST 当期条目 ${currentSeason.length} 条');
+    return _buildScheduleFromCandidates(currentSeason);
+  }
+
   Future<void> _refreshCalendarSchedule({
     bool initial = false,
     bool forceNetwork = false,
@@ -3315,11 +3778,10 @@ class _BangumiHomePageState extends State<BangumiHomePage> {
         _appendDebugLog('日历缓存时区不匹配，跳过缓存并重新抓取');
       }
 
-      final List<DaySchedule> scheduleJst = await _service.fetchCalendarSchedule();
-      final bool shouldRefetchUpdateTimes = forceNetwork || needAutoNetwork;
-      final List<DaySchedule> mergedScheduleJst = await _attachBgmListTimesToSchedule(
-        scheduleJst,
-        forceRefreshBgmTimes: shouldRefetchUpdateTimes,
+      final bool shouldRefetchBgmSource = forceNetwork || needAutoNetwork;
+      final List<DaySchedule> mergedScheduleJst =
+          await _buildScheduleFromBgmListApi(
+        forceRefresh: shouldRefetchBgmSource,
       );
       final List<DaySchedule> mergedSchedule = _convertScheduleFromJstForDisplay(
         mergedScheduleJst,
@@ -3351,6 +3813,27 @@ class _BangumiHomePageState extends State<BangumiHomePage> {
       }
     } catch (e) {
       _appendDebugLog('刷新日历失败: $e');
+
+      try {
+        final List<DaySchedule> cachedSchedule = await _calendarCacheManager
+            .load();
+        if (cachedSchedule.isNotEmpty) {
+          if (!mounted) {
+            return;
+          }
+          _applyScheduleData(
+            cachedSchedule,
+            doneStatusText: '网络失败，已回退本地缓存日历',
+          );
+          await _archiveMissingWatchlistItemsAfterCalendar(cachedSchedule);
+          unawaited(_hydrateCachedCoversForTodayItems());
+          unawaited(_hydrateCachedCoversForWatchlistItems());
+          return;
+        }
+      } catch (_) {
+        // Ignore cache fallback failures and report original error below.
+      }
+
       if (!mounted) {
         return;
       }
@@ -3666,6 +4149,7 @@ class _BangumiHomePageState extends State<BangumiHomePage> {
     }
   }
 
+  // ignore: unused_element
   Future<List<DaySchedule>> _attachBgmListTimesToSchedule(
     List<DaySchedule> schedule,
     {bool forceRefreshBgmTimes = false}

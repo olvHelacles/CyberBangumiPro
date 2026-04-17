@@ -224,6 +224,11 @@ app_settings_v1 当前字段:
 - 已新增 AppBar/TabBar 自定义背景图支持（亮色/深色模式），通过 app_settings_v1 读取开关与路径。
 - AppBar Bottom 已改为“仅裁剪底边”，确保 Logo 溢出到主页面区域时被裁掉，同时保留向上层叠效果。
 - AppBar 背景图加载已做防阻塞加固：限制解码尺寸（cacheWidth/cacheHeight）、异常路径自动回退、UNC 网络共享路径默认禁用加载。
+- 周历网络源已切换为 BGMLIST 直连链路（不再依赖 bangumi.tv/calendar 页面抓取）：
+  - 从 BGMLIST `sites` 直接提取 bangumi id，缺失则丢弃。
+  - 从 `begin` + `broadcast` 解析 JST 星期与更新时间。
+  - 当期判定按“begin + Bangumi API 总集数 + broadcast 周期”计算，且不使用 BGMLIST `end` 字段。
+  - BGMLIST 网络失败时回退本地 `calendar_cache.json`（不回退 calendar 页面抓取）。
 
 ## 9. 后续改动清单（建议每次改动自查）
 
