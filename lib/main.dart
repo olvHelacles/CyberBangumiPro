@@ -8,6 +8,7 @@ import 'package:flutter_svg/flutter_svg.dart';
 import 'package:html/dom.dart' as dom;
 import 'package:html/parser.dart' as html_parser;
 import 'package:http/http.dart' as http;
+import 'package:http/io_client.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:window_manager/window_manager.dart';
 
@@ -1027,17 +1028,29 @@ class WatchArchiveStore {
 
 /// BangumiService：组件或数据结构定义。
 class BangumiService {
-  BangumiService({http.Client? client}) : _client = client ?? http.Client();
+  BangumiService({http.Client? client})
+    : _client = client ?? http.Client(),
+      _ownsClient = client == null,
+      _insecureTlsClient = IOClient(_createInsecureHttpClient());
 
   static const Duration _minRequestInterval = Duration(milliseconds: 800);
   static const Duration _apiHealthCacheTtl = Duration(minutes: 3);
+  static const Set<String> _tlsFallbackHosts = <String>{
+    'bangumi.tv',
+    'api.bgm.tv',
+    'bgmlist.com',
+    'lain.bgm.tv',
+  };
 
   final http.Client _client;
+  final bool _ownsClient;
+  final http.Client _insecureTlsClient;
   final ValueNotifier<int> _activeRequests = ValueNotifier<int>(0);
   DateTime _lastRequestAt = DateTime.fromMillisecondsSinceEpoch(0);
   Future<void> _requestQueue = Future<void>.value();
   int apiFastRetryBaseDelayMs = 120;
   String apiUserAgent = appUserAgent;
+  bool allowInsecureTlsFallback = true;
   bool? _apiAvailableCache;
   DateTime? _apiAvailableCheckedAt;
   void Function(String message)? onNetworkLog;
@@ -1068,6 +1081,64 @@ class BangumiService {
     } catch (_) {
       return rawUrl;
     }
+  }
+
+  static HttpClient _createInsecureHttpClient() {
+    final HttpClient client = HttpClient();
+    client.badCertificateCallback = (
+      X509Certificate cert,
+      String host,
+      int port,
+    ) => true;
+    return client;
+  }
+
+  bool _isTlsCertificateFailure(Object error) {
+    final String message = error.toString().toUpperCase();
+    return message.contains('HANDSHAKEEXCEPTION') ||
+        message.contains('CERTIFICATE_VERIFY_FAILED');
+  }
+
+  bool _shouldTryInsecureTlsFallback(Uri uri, Object error) {
+    if (!allowInsecureTlsFallback || uri.scheme.toLowerCase() != 'https') {
+      return false;
+    }
+    if (!_tlsFallbackHosts.contains(uri.host.toLowerCase())) {
+      return false;
+    }
+    return _isTlsCertificateFailure(error);
+  }
+
+  Future<http.Response> _getWithTlsFallback(
+    Uri uri, {
+    required Map<String, String> headers,
+    required String purpose,
+  }) async {
+    try {
+      return await _client
+          .get(uri, headers: headers)
+          .timeout(const Duration(seconds: 15));
+    } catch (e) {
+      if (!_shouldTryInsecureTlsFallback(uri, e)) {
+        rethrow;
+      }
+
+      _logNetwork(
+        'TLS 证书校验失败[$purpose] ${_describeUrl(uri.toString())}，'
+        '对该域名启用兼容重试（不安全 TLS）',
+      );
+      return _insecureTlsClient
+          .get(uri, headers: headers)
+          .timeout(const Duration(seconds: 15));
+    }
+  }
+
+  void dispose() {
+    if (_ownsClient) {
+      _client.close();
+    }
+    _insecureTlsClient.close();
+    _activeRequests.dispose();
   }
 
   Future<T> _runTrackedRequest<T>(Future<T> Function() operation) async {
@@ -1249,10 +1320,13 @@ class BangumiService {
         if (respectRateLimit) {
           await _waitForRequestSlot();
         }
+        final Uri requestUri = Uri.parse(url);
         final http.Response response = await _runTrackedRequest(
-          () => _client
-              .get(Uri.parse(url), headers: headers)
-              .timeout(const Duration(seconds: 15)),
+          () => _getWithTlsFallback(
+            requestUri,
+            headers: headers,
+            purpose: purpose,
+          ),
         );
         if (response.statusCode >= 200 && response.statusCode < 300) {
           _logNetwork(
@@ -1302,10 +1376,13 @@ class BangumiService {
         if (respectRateLimit) {
           await _waitForRequestSlot();
         }
+        final Uri requestUri = Uri.parse(url);
         final http.Response response = await _runTrackedRequest(
-          () => _client
-              .get(Uri.parse(url), headers: imageRequestHeaders)
-              .timeout(const Duration(seconds: 15)),
+          () => _getWithTlsFallback(
+            requestUri,
+            headers: imageRequestHeaders,
+            purpose: purpose,
+          ),
         );
         if (response.statusCode >= 200 && response.statusCode < 300) {
           _logNetwork(
@@ -2239,6 +2316,7 @@ class _BangumiHomePageState extends State<BangumiHomePage> {
   void dispose() {
     _service.onNetworkLog = null;
     _service.activeRequests.removeListener(_onNetworkActivityChanged);
+    _service.dispose();
     _networkIndicatorHideTimer?.cancel();
     _statusTextTimer?.cancel();
     _searchController.dispose();
