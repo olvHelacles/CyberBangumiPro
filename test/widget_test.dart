@@ -69,6 +69,26 @@ void main() {
     expect(displayMoment.minute, 30);
   });
 
+  /// 回归测试：周五 20:10 不应把周五 23:00 判定成已放送。
+  test('Display timeline ordering does not mark Friday 23:00 as already aired at 20:10', () {
+    final DateTime? displayMoment =
+        BroadcastTimeConverter.resolveEpisodeBroadcastInDisplayTime(
+      airdateJst: DateTime(2026, 4, 17),
+      displayTime: '23:00',
+      displayOffsetMinutes: 8 * 60,
+      displayWeekday: '星期五',
+    );
+
+    expect(displayMoment, isNotNull);
+    expect(displayMoment!.isUtc, isTrue);
+    expect(displayMoment.weekday, DateTime.friday);
+    expect(displayMoment.hour, 23);
+    expect(displayMoment.minute, 0);
+
+    final DateTime simulatedNowInDisplay = DateTime.utc(2026, 4, 17, 20, 10);
+    expect(displayMoment.isAfter(simulatedNowInDisplay), isTrue);
+  });
+
   /// 验证主题模式序列化与反序列化映射稳定。
   test('Theme mode storage mapping is stable', () {
     expect(themeModeFromStorageValue('system'), ThemeMode.system);

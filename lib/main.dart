@@ -267,14 +267,17 @@ class BroadcastTimeConverter {
     final int jstDayCarry = displayDayCarry + _floorDiv(jstAbsolute, 24 * 60);
     final int jstMinuteInDay = _positiveMod(jstAbsolute, 24 * 60);
 
-    final DateTime jstDate = DateTime(
+    // Use UTC baseline to avoid mixing local and UTC DateTime semantics.
+    final DateTime jstDate = DateTime.utc(
       airdateJst.year,
       airdateJst.month,
       airdateJst.day,
     ).add(Duration(days: jstDayCarry));
-    final DateTime jstMoment = jstDate.add(Duration(minutes: jstMinuteInDay));
-    DateTime displayMoment = jstMoment.add(
-      Duration(minutes: normalizedDisplayOffset - jstOffsetMinutes),
+    final DateTime jstMomentUtc = jstDate.add(
+      Duration(minutes: jstMinuteInDay - jstOffsetMinutes),
+    );
+    DateTime displayMoment = jstMomentUtc.add(
+      Duration(minutes: normalizedDisplayOffset),
     );
 
     final int? expectedWeekday = weekdayToIndex(displayWeekday);
@@ -1994,7 +1997,7 @@ class BangumiService {
       );
     final DateTime nowInDisplay =
       DateTime.now().toUtc().add(Duration(minutes: normalizedDisplayOffset));
-    final DateTime todayStartInDisplay = DateTime(
+    final DateTime todayStartInDisplay = DateTime.utc(
       nowInDisplay.year,
       nowInDisplay.month,
       nowInDisplay.day,
@@ -2031,14 +2034,14 @@ class BangumiService {
         if (airedAtInDisplay != null) {
           isAired = !airedAtInDisplay.isAfter(nowInDisplay);
         } else {
-          isAired = !DateTime(
+          isAired = !DateTime.utc(
             airdate.year,
             airdate.month,
             airdate.day,
           ).isAfter(todayStartInDisplay);
         }
       } else {
-        isAired = !DateTime(
+        isAired = !DateTime.utc(
           airdate.year,
           airdate.month,
           airdate.day,
