@@ -31,6 +31,10 @@ const String progressCorrectionDeltaStorageKey =
 const String timezoneConversionEnabledSettingKey =
     'timezone_conversion_enabled';
 const String timezoneOffsetMinutesSettingKey = 'timezone_offset_minutes';
+const String proxyEnabledSettingKey = 'proxy_enabled';
+const String proxyHostSettingKey = 'proxy_host';
+const String proxyPortSettingKey = 'proxy_port';
+const String proxyBypassSettingKey = 'proxy_bypass';
 const String appUserAgent = 'OlvSilence/my-private-project';
 const String browserUserAgent =
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
@@ -68,6 +72,10 @@ const int defaultSettingProgressConcurrency = 10;
 const int defaultSettingCoverCacheConcurrency = 12;
 const bool defaultSettingTimezoneConversionEnabled = true;
 const int defaultSettingTimezoneOffsetMinutes = 8 * 60;
+const bool defaultSettingProxyEnabled = false;
+const String defaultSettingProxyHost = '127.0.0.1';
+const int defaultSettingProxyPort = 7890;
+const String defaultSettingProxyBypass = 'localhost,127.0.0.1';
 
 /// BroadcastScheduleHint：组件或数据结构定义。
 class BroadcastScheduleHint {
@@ -1060,9 +1068,21 @@ class WatchArchiveStore {
 /// BangumiService：组件或数据结构定义。
 class BangumiService {
   BangumiService({http.Client? client})
-    : _client = client ?? http.Client(),
-      _ownsClient = client == null,
-      _insecureTlsClient = IOClient(_createInsecureHttpClient());
+    : _ownsClient = client == null,
+      _proxyEnabled = false,
+      _proxyHost = '127.0.0.1',
+      _proxyPort = 7890,
+      _proxyBypassList = const <String>['localhost', '127.0.0.1'] {
+    if (client != null) {
+      _client = client;
+      _insecureTlsClient = IOClient(_createHttpClient(allowBadCertificate: true));
+    } else {
+      final HttpClient normal = _createHttpClient();
+      _client = IOClient(normal);
+      final HttpClient insecure = _createHttpClient(allowBadCertificate: true);
+      _insecureTlsClient = IOClient(insecure);
+    }
+  }
 
   static const Duration _minRequestInterval = Duration(milliseconds: 800);
   static const Duration _apiHealthCacheTtl = Duration(minutes: 3);
@@ -1073,9 +1093,9 @@ class BangumiService {
     'lain.bgm.tv',
   };
 
-  final http.Client _client;
+  late http.Client _client;
   final bool _ownsClient;
-  final http.Client _insecureTlsClient;
+  late http.Client _insecureTlsClient;
   final ValueNotifier<int> _activeRequests = ValueNotifier<int>(0);
   DateTime _lastRequestAt = DateTime.fromMillisecondsSinceEpoch(0);
   Future<void> _requestQueue = Future<void>.value();
@@ -1085,6 +1105,11 @@ class BangumiService {
   bool? _apiAvailableCache;
   DateTime? _apiAvailableCheckedAt;
   void Function(String message)? onNetworkLog;
+
+  bool _proxyEnabled;
+  String _proxyHost;
+  int _proxyPort;
+  List<String> _proxyBypassList;
 
   ValueNotifier<int> get activeRequests => _activeRequests;
 
@@ -1114,14 +1139,67 @@ class BangumiService {
     }
   }
 
-  static HttpClient _createInsecureHttpClient() {
+  static HttpClient _createHttpClient({bool allowBadCertificate = false}) {
     final HttpClient client = HttpClient();
-    client.badCertificateCallback = (
-      X509Certificate cert,
-      String host,
-      int port,
-    ) => true;
+    if (allowBadCertificate) {
+      client.badCertificateCallback = (
+        X509Certificate cert,
+        String host,
+        int port,
+      ) => true;
+    }
     return client;
+  }
+
+  bool _shouldBypassProxy(String host) {
+    for (final String entry in _proxyBypassList) {
+      if (entry.startsWith('*')) {
+        if (host.endsWith(entry.substring(1))) return true;
+      } else {
+        if (host == entry) return true;
+      }
+    }
+    return false;
+  }
+
+  void _applyProxy(HttpClient client) {
+    if (!_proxyEnabled) return;
+    final String proxyAddress = 'PROXY $_proxyHost:$_proxyPort';
+    client.findProxy = (Uri uri) {
+      if (_shouldBypassProxy(uri.host)) return 'DIRECT';
+      return proxyAddress;
+    };
+  }
+
+  /// 更新代理配置并重新创建底层 HTTP 客户端。
+  void updateProxySettings(
+    bool enabled,
+    String host,
+    int port,
+    String bypass,
+  ) {
+    _proxyEnabled = enabled;
+    _proxyHost = host;
+    _proxyPort = port;
+    _proxyBypassList = bypass
+        .split(',')
+        .map((String s) => s.trim())
+        .where((String s) => s.isNotEmpty)
+        .toList();
+
+    final HttpClient newClient = _createHttpClient();
+    _applyProxy(newClient);
+    if (_ownsClient) _client.close();
+    _client = IOClient(newClient);
+
+    final HttpClient newInsecureClient = _createHttpClient(allowBadCertificate: true);
+    _applyProxy(newInsecureClient);
+    _insecureTlsClient.close();
+    _insecureTlsClient = IOClient(newInsecureClient);
+
+    _logNetwork(
+      '代理配置已更新: ${_proxyEnabled ? "$_proxyHost:$_proxyPort" : "直连"}',
+    );
   }
 
   bool _isTlsCertificateFailure(Object error) {
@@ -2499,6 +2577,10 @@ class _BangumiHomePageState extends State<BangumiHomePage>
   bool _settingTimezoneConversionEnabled =
       defaultSettingTimezoneConversionEnabled;
   int _settingTimezoneOffsetMinutes = defaultSettingTimezoneOffsetMinutes;
+  bool _settingProxyEnabled = defaultSettingProxyEnabled;
+  String _settingProxyHost = defaultSettingProxyHost;
+  int _settingProxyPort = defaultSettingProxyPort;
+  String _settingProxyBypass = defaultSettingProxyBypass;
   bool _weekCalendarShowAll = false;
   bool _debugShowChartHoverHitArea = false;
   String? _hoveredChartSubjectId;
@@ -2850,13 +2932,32 @@ class _BangumiHomePageState extends State<BangumiHomePage>
       (jsonMap[timezoneOffsetMinutesSettingKey] as num?)?.toInt() ??
           defaultSettingTimezoneOffsetMinutes,
     );
+    _settingProxyEnabled =
+        (jsonMap[proxyEnabledSettingKey] as bool?) ?? defaultSettingProxyEnabled;
+    _settingProxyHost =
+        (jsonMap[proxyHostSettingKey] as String? ?? defaultSettingProxyHost).trim();
+    _settingProxyPort =
+        (jsonMap[proxyPortSettingKey] as num?)?.toInt() ?? defaultSettingProxyPort;
+    _settingProxyBypass =
+        (jsonMap[proxyBypassSettingKey] as String? ?? defaultSettingProxyBypass).trim();
 
     _service.apiUserAgent = _settingApiUserAgent.isEmpty
       ? appUserAgent
       : _settingApiUserAgent;
+    _service.updateProxySettings(
+      _settingProxyEnabled,
+      _settingProxyHost,
+      _settingProxyPort,
+      _settingProxyBypass,
+    );
     widget.onThemeModeChanged?.call(_settingThemeMode);
     _appendDebugLog('网络: 当前 API UA: ${_service.effectiveApiUserAgent}');
     _appendDebugLog('时区: 当前显示时区 $_currentTimezoneFullLabel');
+    if (_settingProxyEnabled) {
+      _appendDebugLog('代理: 已启用 $_settingProxyHost:$_settingProxyPort');
+    } else {
+      _appendDebugLog('代理: 未启用');
+    }
   }
 
   Future<void> _saveSettings() async {
@@ -2871,6 +2972,10 @@ class _BangumiHomePageState extends State<BangumiHomePage>
       appBarBackgroundImagePathSettingKey: _settingAppBarBackgroundImagePath,
       timezoneConversionEnabledSettingKey: _settingTimezoneConversionEnabled,
       timezoneOffsetMinutesSettingKey: _settingTimezoneOffsetMinutes,
+      proxyEnabledSettingKey: _settingProxyEnabled,
+      proxyHostSettingKey: _settingProxyHost,
+      proxyPortSettingKey: _settingProxyPort,
+      proxyBypassSettingKey: _settingProxyBypass,
     };
     await _appStateStore.writeState(state);
   }
@@ -3073,10 +3178,17 @@ class _BangumiHomePageState extends State<BangumiHomePage>
     String tempAppBarBackgroundImagePath = _settingAppBarBackgroundImagePath;
     bool tempTimezoneConversionEnabled = _settingTimezoneConversionEnabled;
     int tempTimezoneOffsetMinutes = _settingTimezoneOffsetMinutes;
+    bool tempProxyEnabled = _settingProxyEnabled;
+    String tempProxyHost = _settingProxyHost;
+    int tempProxyPort = _settingProxyPort;
+    String tempProxyBypass = _settingProxyBypass;
     final ThemeMode previousThemeMode = _settingThemeMode;
     final bool previousTimezoneConversionEnabled =
         _settingTimezoneConversionEnabled;
     final int previousTimezoneOffsetMinutes = _settingTimezoneOffsetMinutes;
+    final bool previousProxyEnabled = _settingProxyEnabled;
+    final String previousProxyHost = _settingProxyHost;
+    final int previousProxyPort = _settingProxyPort;
     final List<int> commonTimezoneOffsets = <int>[
       for (int hour = -12; hour <= 14; hour++) hour * 60,
     ];
@@ -3248,6 +3360,81 @@ class _BangumiHomePageState extends State<BangumiHomePage>
                           });
                         },
                       ),
+                      const Divider(height: 24),
+                      SwitchListTile(
+                        contentPadding: EdgeInsets.zero,
+                        value: tempProxyEnabled,
+                        onChanged: (bool value) {
+                          setLocalState(() {
+                            tempProxyEnabled = value;
+                          });
+                        },
+                        title: const Text('启用代理'),
+                        subtitle: Text(
+                          tempProxyEnabled
+                              ? '已启用 $tempProxyHost:$tempProxyPort'
+                              : '已关闭，直连',
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      Row(
+                        children: <Widget>[
+                          Expanded(
+                            flex: 3,
+                            child: TextFormField(
+                              initialValue: tempProxyHost,
+                              enabled: tempProxyEnabled,
+                              decoration: const InputDecoration(
+                                border: OutlineInputBorder(),
+                                labelText: '代理主机',
+                                hintText: '127.0.0.1',
+                              ),
+                              onChanged: (String value) {
+                                setLocalState(() {
+                                  tempProxyHost = value.trim();
+                                });
+                              },
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            flex: 1,
+                            child: TextFormField(
+                              initialValue: tempProxyPort.toString(),
+                              enabled: tempProxyEnabled,
+                              keyboardType: TextInputType.number,
+                              decoration: const InputDecoration(
+                                border: OutlineInputBorder(),
+                                labelText: '端口',
+                                hintText: '7890',
+                              ),
+                              onChanged: (String value) {
+                                final int? parsed = int.tryParse(value);
+                                if (parsed != null) {
+                                  setLocalState(() {
+                                    tempProxyPort = parsed;
+                                  });
+                                }
+                              },
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 6),
+                      TextFormField(
+                        initialValue: tempProxyBypass,
+                        enabled: tempProxyEnabled,
+                        decoration: const InputDecoration(
+                          border: OutlineInputBorder(),
+                          labelText: '绕过代理',
+                          hintText: 'localhost,127.0.0.1',
+                        ),
+                        onChanged: (String value) {
+                          setLocalState(() {
+                            tempProxyBypass = value;
+                          });
+                        },
+                      ),
                     ],
                   ),
                 ),
@@ -3291,6 +3478,9 @@ class _BangumiHomePageState extends State<BangumiHomePage>
     final bool timezoneChanged =
         previousTimezoneConversionEnabled != tempTimezoneConversionEnabled ||
         previousTimezoneOffsetMinutes != tempTimezoneOffsetMinutes;
+    final bool proxyChanged = previousProxyEnabled != tempProxyEnabled ||
+        previousProxyHost != tempProxyHost ||
+        previousProxyPort != tempProxyPort;
 
     setState(() {
       _settingProgressConcurrency = tempProgressConcurrency;
@@ -3303,6 +3493,10 @@ class _BangumiHomePageState extends State<BangumiHomePage>
       _settingTimezoneOffsetMinutes = _clampTimezoneOffsetMinutes(
         tempTimezoneOffsetMinutes,
       );
+      _settingProxyEnabled = tempProxyEnabled;
+      _settingProxyHost = tempProxyHost;
+      _settingProxyPort = tempProxyPort;
+      _settingProxyBypass = tempProxyBypass;
       _service.apiUserAgent = _settingApiUserAgent.isEmpty
           ? appUserAgent
           : _settingApiUserAgent;
@@ -3311,9 +3505,20 @@ class _BangumiHomePageState extends State<BangumiHomePage>
       widget.onThemeModeChanged?.call(_settingThemeMode);
       _appendDebugLog('主题: 当前模式 ${themeModeDisplayText(_settingThemeMode)}');
     }
+    if (proxyChanged) {
+      _service.updateProxySettings(
+        _settingProxyEnabled,
+        _settingProxyHost,
+        _settingProxyPort,
+        _settingProxyBypass,
+      );
+    }
     await _saveSettings();
     _appendDebugLog('网络: 当前 API UA: ${_service.effectiveApiUserAgent}');
     _appendDebugLog('时区: 当前显示时区 $_currentTimezoneFullLabel');
+    if (_settingProxyEnabled) {
+      _appendDebugLog('代理: 已启用 $_settingProxyHost:$_settingProxyPort');
+    }
 
     if (timezoneChanged) {
       _showStatus('设置已保存，正在按新时区重算日历与进度...', autoHide: false);
