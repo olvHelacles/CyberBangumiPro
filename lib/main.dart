@@ -13,7 +13,7 @@ import 'package:http/io_client.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:window_manager/window_manager.dart';
 
-const String calendarUrl = 'https://bangumi.tv/calendar';
+import 'clash_manager.dart';const String bgmlistArchiveBaseUrl = 'https://bgmlist.com/archive';
 const String bangumiApiBaseUrl = 'https://api.bgm.tv';
 const String bgmListOnAirApiUrl = 'https://bgmlist.com/api/v1/bangumi/onair';
 const String watchlistStorageKey = 'watchlist';
@@ -34,6 +34,7 @@ const String timezoneOffsetMinutesSettingKey = 'timezone_offset_minutes';
 const String proxyEnabledSettingKey = 'proxy_enabled';
 const String proxyHostSettingKey = 'proxy_host';
 const String proxyPortSettingKey = 'proxy_port';
+const String proxySubscriptionUrlSettingKey = 'proxy_subscription_url';
 const String proxyBypassSettingKey = 'proxy_bypass';
 const String appUserAgent = 'OlvSilence/my-private-project';
 const String browserUserAgent =
@@ -72,10 +73,11 @@ const int defaultSettingProgressConcurrency = 10;
 const int defaultSettingCoverCacheConcurrency = 12;
 const bool defaultSettingTimezoneConversionEnabled = true;
 const int defaultSettingTimezoneOffsetMinutes = 8 * 60;
-const bool defaultSettingProxyEnabled = false;
+const bool defaultSettingProxyEnabled = true;
 const String defaultSettingProxyHost = '127.0.0.1';
 const int defaultSettingProxyPort = 7890;
 const String defaultSettingProxyBypass = 'localhost,127.0.0.1';
+const String defaultSettingProxySubscriptionUrl = '';
 
 /// BroadcastScheduleHint：组件或数据结构定义。
 class BroadcastScheduleHint {
@@ -438,6 +440,14 @@ ThemeData buildAppTheme(Brightness brightness) {
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // Start the local clash proxy so Bangumi API requests can go through.
+  try {
+    await ClashManager.instance.start();
+  } catch (e) {
+    // Non-fatal: the app can still work if an external proxy is already
+    // running on the configured port.
+  }
 
   if (Platform.isWindows || Platform.isLinux || Platform.isMacOS) {
     await windowManager.ensureInitialized();
@@ -1072,14 +1082,17 @@ class BangumiService {
       _proxyEnabled = false,
       _proxyHost = '127.0.0.1',
       _proxyPort = 7890,
-      _proxyBypassList = const <String>['localhost', '127.0.0.1'] {
+      _proxyBypassList = const <String>['localhost', '127.0.0.1'],
+      _subjectStartDates = <String, DateTime>{} {
     if (client != null) {
       _client = client;
       _insecureTlsClient = IOClient(_createHttpClient(allowBadCertificate: true));
     } else {
       final HttpClient normal = _createHttpClient();
+      _applyProxy(normal);
       _client = IOClient(normal);
       final HttpClient insecure = _createHttpClient(allowBadCertificate: true);
+      _applyProxy(insecure);
       _insecureTlsClient = IOClient(insecure);
     }
   }
@@ -1101,6 +1114,9 @@ class BangumiService {
   Future<void> _requestQueue = Future<void>.value();
   int apiFastRetryBaseDelayMs = 120;
   String apiUserAgent = appUserAgent;
+  final Map<String, DateTime> _subjectStartDates;
+  Map<String, DateTime> get subjectStartDates =>
+      Map<String, DateTime>.unmodifiable(_subjectStartDates);
   bool allowInsecureTlsFallback = true;
   bool? _apiAvailableCache;
   DateTime? _apiAvailableCheckedAt;
@@ -1526,10 +1542,17 @@ class BangumiService {
     throw Exception(lastError?.toString() ?? '图片请求失败');
   }
 
+  static String _buildArchiveUrl(DateTime now) {
+    final int q = ((now.month - 1) ~/ 3) + 1;
+    return '$bgmlistArchiveBaseUrl/${now.year}q$q';
+  }
+
   Future<List<DaySchedule>> fetchCalendarSchedule() async {
+    _subjectStartDates.clear();
+    final String url = _buildArchiveUrl(DateTime.now());
     final String pageText = await _getWithRetry(
-      calendarUrl,
-      purpose: '抓取 Bangumi 日历页面',
+      url,
+      purpose: '抓取 BGMLIST 当季番组页面',
     );
     return parseDailySchedule(pageText);
   }
@@ -1565,6 +1588,44 @@ class BangumiService {
 
   Future<String> fetchBgmListOnAirJson() async {
     return _getWithRetry(bgmListOnAirApiUrl, purpose: '抓取 BGMLIST 全部番组 JSON');
+  }
+
+  /// Check whether a subject is still airing (aired episodes < total).
+  Future<bool> isSubjectStillAiring(String subjectId) async {
+    if (subjectId.isEmpty) return false;
+
+    // Total episodes from subject endpoint.
+    final Map<String, dynamic>? subject = await _fetchSubjectFromApi(subjectId);
+    if (subject == null || subject.isEmpty) return false;
+    final int? totalEps =
+        _readInt(subject['total_episodes']) ?? _readInt(subject['eps']);
+    if (totalEps == null || totalEps <= 0) return false;
+
+    // Aired count from episodes list.
+    final List<Map<String, dynamic>> episodes =
+        await _fetchMainEpisodesFromApi(subjectId);
+    if (episodes.isEmpty) return false;
+
+    final DateTime todayStartJst = DateTime.now()
+        .toUtc()
+        .add(const Duration(hours: 9));
+    final DateTime jstDayStart =
+        DateTime.utc(todayStartJst.year, todayStartJst.month, todayStartJst.day);
+
+    int aired = 0;
+    for (final Map<String, dynamic> ep in episodes) {
+      final int epNo =
+          (_readDouble(ep['ep']) ?? _readDouble(ep['sort']) ?? 0).round();
+      if (epNo <= 0) continue;
+      final String airdateText = _readString(ep['airdate']);
+      if (airdateText.isEmpty) continue;
+      final DateTime? airdate = _readDate(airdateText);
+      if (airdate != null && !airdate.isAfter(jstDayStart)) {
+        aired += 1;
+      }
+    }
+
+    return aired < totalEps;
   }
 
   DateTime? _toJstDateTimeFromIso(String isoText) {
@@ -2222,71 +2283,95 @@ class BangumiService {
   }
 
   
+  /// Map BGMLIST Chinese weekday chars to the standard Bangumi weekday name.
+  static String _standardizeWeekday(String chineseDay) {
+    switch (chineseDay) {
+      case '日':  return '星期日';
+      case '一':  return '星期一';
+      case '二':  return '星期二';
+      case '三':  return '星期三';
+      case '四':  return '星期四';
+      case '五':  return '星期五';
+      case '六':  return '星期六';
+      default:    return '';
+    }
+  }
+
   List<DaySchedule> parseDailySchedule(String pageText) {
     final dom.Document document = html_parser.parse(pageText);
-    final dom.Element? calendar = document.querySelector(
-      'div.BgmCalendar ul.large',
-    );
-    if (calendar == null) {
-      return <DaySchedule>[];
+
+    final Map<String, List<SubjectItem>> dayGroups = <String, List<SubjectItem>>{
+      for (final String d in <String>[
+        '星期日', '星期一', '星期二', '星期三', '星期四', '星期五', '星期六',
+      ])
+        d: <SubjectItem>[],
+    };
+
+    for (final dom.Element article in document.querySelectorAll('article')) {
+      // CN title
+      final dom.Element? h3 = article.querySelector('h3');
+      final String cnName = h3?.text.trim() ?? '';
+      if (cnName.isEmpty) continue;
+
+      // JP subtitle
+      final String originName =
+          article.querySelector('[class^="BangumiItem_subTitle"]')?.text
+                  .trim() ??
+              '';
+
+      // Broadcast day and time: "每周X HH:MM"
+      final String fullText = article.text;
+      final RegExpMatch? timeMatch = RegExp(
+        r'每周([日月一二三四五六七八九十]+)\s*(\d{2}:\d{2})',
+      ).firstMatch(fullText);
+      if (timeMatch == null) continue;
+      final String weekday = _standardizeWeekday(timeMatch.group(1)!);
+      final String updateTime = timeMatch.group(2)!;
+      if (weekday.isEmpty) continue;
+
+      // Bangumi ID from the 「番组计划」 link
+      final dom.Element? bgmLink = article.querySelector(
+        'a[href*="bangumi.tv/subject/"]',
+      );
+      if (bgmLink == null) continue;
+      final String href = bgmLink.attributes['href'] ?? '';
+      final RegExpMatch? idMatch = RegExp(r'/subject/(\d+)').firstMatch(href);
+      final String subjectId = idMatch?.group(1) ?? '';
+      if (subjectId.isEmpty) continue;
+
+      // Broadcast start date (JST, from the archive page)
+      final RegExpMatch? startMatch = RegExp(
+        r'(\d{4}-\d{2}-\d{2})\s*起',
+      ).firstMatch(fullText);
+      if (startMatch != null) {
+        final DateTime? parsed = DateTime.tryParse(startMatch.group(1)!);
+        if (parsed != null) {
+          _subjectStartDates[subjectId] = parsed;
+        }
+      }
+
+      dayGroups[weekday]!.add(SubjectItem(
+        subjectId: subjectId,
+        subjectUrl: href,
+        nameCn: cnName,
+        nameOrigin: originName,
+        coverUrl: '',
+        updateTime: updateTime,
+      ));
     }
 
     final List<DaySchedule> schedules = <DaySchedule>[];
-
-    for (final dom.Element weekItem in calendar.querySelectorAll('li.week')) {
-      final String weekday = weekItem.querySelector('dt h3')?.text.trim() ?? '';
-      final List<SubjectItem> items = <SubjectItem>[];
-
-      for (final dom.Element animeNode in weekItem.querySelectorAll(
-        'dd ul.coverList > li',
-      )) {
-        final List<dom.Element> nameNodes = animeNode.querySelectorAll(
-          'div.info p a.nav',
+    for (final String wd in <String>[
+      '星期日', '星期一', '星期二', '星期三', '星期四', '星期五', '星期六',
+    ]) {
+      if (dayGroups[wd]!.isNotEmpty) {
+        dayGroups[wd]!.sort(
+          (SubjectItem a, SubjectItem b) =>
+              a.updateTime.compareTo(b.updateTime),
         );
-        if (nameNodes.isEmpty) {
-          continue;
-        }
-
-        final String cnName = nameNodes.isNotEmpty
-            ? nameNodes[0].text.trim()
-            : '';
-        final String originName = nameNodes.length > 1
-            ? nameNodes[1].text.trim()
-            : '';
-        if (cnName.isEmpty && originName.isEmpty) {
-          continue;
-        }
-
-        final String subjectPath =
-            nameNodes[0].attributes['href']?.trim() ?? '';
-        String subjectId = '';
-        final RegExpMatch? match = RegExp(
-          r'^/subject/(\d+)',
-        ).firstMatch(subjectPath);
-        if (match != null) {
-          subjectId = match.group(1) ?? '';
-        }
-
-        final String coverUrl = _extractCoverUrlFromNode(animeNode);
-
-        items.add(
-          SubjectItem(
-            subjectId: subjectId,
-            subjectUrl: subjectPath.isEmpty
-                ? ''
-                : 'https://bangumi.tv$subjectPath',
-            nameCn: cnName,
-            nameOrigin: originName,
-            coverUrl: coverUrl,
-          ),
-        );
-      }
-
-      if (weekday.isNotEmpty) {
-        schedules.add(DaySchedule(weekday: weekday, items: items));
+        schedules.add(DaySchedule(weekday: wd, items: dayGroups[wd]!));
       }
     }
-
     return schedules;
   }
 
@@ -2581,6 +2666,7 @@ class _BangumiHomePageState extends State<BangumiHomePage>
   String _settingProxyHost = defaultSettingProxyHost;
   int _settingProxyPort = defaultSettingProxyPort;
   String _settingProxyBypass = defaultSettingProxyBypass;
+  String _settingProxySubscriptionUrl = defaultSettingProxySubscriptionUrl;
   bool _weekCalendarShowAll = false;
   bool _debugShowChartHoverHitArea = false;
   String? _hoveredChartSubjectId;
@@ -2760,6 +2846,21 @@ class _BangumiHomePageState extends State<BangumiHomePage>
   Future<void> _bootstrap() async {
     _appendDebugLog('开始初始化');
     await _loadSettings();
+    // Re-apply the saved subscription URL so clash starts with usable nodes.
+    if (_settingProxySubscriptionUrl.trim().isNotEmpty &&
+        ClashManager.instance.isRunning) {
+      try {
+        await ClashManager.instance.stop();
+        await ClashManager.instance.applySubscription(
+          _settingProxySubscriptionUrl.trim(),
+        );
+        await ClashManager.instance.start(
+          savedSubscriptionUrl: _settingProxySubscriptionUrl.trim(),
+        );
+      } catch (e) {
+        _appendDebugLog('代理: 启动时应用订阅失败 ($e)');
+      }
+    }
     await _loadProgressCorrections();
     final bool cacheDirMissingAtStartup = await _coverCacheManager
         .isCacheDirMissingInAppDir();
@@ -2940,6 +3041,9 @@ class _BangumiHomePageState extends State<BangumiHomePage>
         (jsonMap[proxyPortSettingKey] as num?)?.toInt() ?? defaultSettingProxyPort;
     _settingProxyBypass =
         (jsonMap[proxyBypassSettingKey] as String? ?? defaultSettingProxyBypass).trim();
+    _settingProxySubscriptionUrl =
+        (jsonMap[proxySubscriptionUrlSettingKey] as String? ?? defaultSettingProxySubscriptionUrl)
+            .trim();
 
     _service.apiUserAgent = _settingApiUserAgent.isEmpty
       ? appUserAgent
@@ -2976,6 +3080,7 @@ class _BangumiHomePageState extends State<BangumiHomePage>
       proxyHostSettingKey: _settingProxyHost,
       proxyPortSettingKey: _settingProxyPort,
       proxyBypassSettingKey: _settingProxyBypass,
+      proxySubscriptionUrlSettingKey: _settingProxySubscriptionUrl,
     };
     await _appStateStore.writeState(state);
   }
@@ -3179,19 +3284,21 @@ class _BangumiHomePageState extends State<BangumiHomePage>
     bool tempTimezoneConversionEnabled = _settingTimezoneConversionEnabled;
     int tempTimezoneOffsetMinutes = _settingTimezoneOffsetMinutes;
     bool tempProxyEnabled = _settingProxyEnabled;
-    String tempProxyHost = _settingProxyHost;
-    int tempProxyPort = _settingProxyPort;
-    String tempProxyBypass = _settingProxyBypass;
+    String tempProxySubscriptionUrl = _settingProxySubscriptionUrl;
+    final TextEditingController subscriptionCtrl = TextEditingController(
+      text: tempProxySubscriptionUrl,
+    );
     final ThemeMode previousThemeMode = _settingThemeMode;
     final bool previousTimezoneConversionEnabled =
         _settingTimezoneConversionEnabled;
     final int previousTimezoneOffsetMinutes = _settingTimezoneOffsetMinutes;
     final bool previousProxyEnabled = _settingProxyEnabled;
-    final String previousProxyHost = _settingProxyHost;
-    final int previousProxyPort = _settingProxyPort;
     final List<int> commonTimezoneOffsets = <int>[
       for (int hour = -12; hour <= 14; hour++) hour * 60,
     ];
+
+    // Refresh current proxy node info before showing the dialog.
+    unawaited(ClashManager.instance.refreshNodeInfo());
 
     final bool? confirmed = await showDialog<bool>(
       context: context,
@@ -3231,7 +3338,7 @@ class _BangumiHomePageState extends State<BangumiHomePage>
                           });
                         },
                       ),
-                      const SizedBox(height: 8),
+                      const Divider(height: 24),
                       SwitchListTile(
                         contentPadding: EdgeInsets.zero,
                         value: tempAppBarBackgroundImageEnabled,
@@ -3260,7 +3367,7 @@ class _BangumiHomePageState extends State<BangumiHomePage>
                           });
                         },
                       ),
-                      const SizedBox(height: 8),
+                      const Divider(height: 24),
                       Align(
                         alignment: Alignment.centerLeft,
                         child: Text('进度刷新并发: $tempProgressConcurrency'),
@@ -3296,6 +3403,7 @@ class _BangumiHomePageState extends State<BangumiHomePage>
                           });
                         },
                       ),
+                      const Divider(height: 24),
                       SwitchListTile(
                         contentPadding: EdgeInsets.zero,
                         value: tempTimezoneConversionEnabled,
@@ -3342,7 +3450,78 @@ class _BangumiHomePageState extends State<BangumiHomePage>
                               }
                             : null,
                       ),
-                      const SizedBox(height: 8),
+                      const Divider(height: 24),
+                      // ── Clash / Proxy ──
+                      Row(
+                        children: <Widget>[
+                          Icon(
+                            Icons.circle,
+                            size: 10,
+                            color: ClashManager.instance.isRunning
+                                ? const Color(0xFF22C55E)
+                                : const Color(0xFFEF4444),
+                          ),
+                          const SizedBox(width: 6),
+                          Expanded(
+                            child: Text(
+                              ClashManager.instance.isRunning
+                                  ? (ClashManager.instance.currentNode.isNotEmpty
+                                      ? '${ClashManager.instance.currentNode}  ${ClashManager.instance.currentLatency}ms'
+                                      : 'Clash: 未就绪')
+                                  : 'Clash: 未就绪',
+                              style: const TextStyle(fontSize: 13),
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                          TextButton.icon(
+                            onPressed: () async {
+                              setLocalState(() {});
+                              try {
+                                await ClashManager.instance.stop();
+                                await ClashManager.instance.start();
+                                await ClashManager.instance.refreshNodeInfo();
+                                setLocalState(() {});
+                              } catch (e) {
+                                setLocalState(() {});
+                              }
+                            },
+                            icon: const Icon(Icons.refresh, size: 16),
+                            label: const Text('重启', style: TextStyle(fontSize: 12)),
+                            style: TextButton.styleFrom(
+                              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                              visualDensity: VisualDensity.compact,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 6),
+                      TextFormField(
+                        controller: subscriptionCtrl,
+                        enableInteractiveSelection: true,
+                        decoration: const InputDecoration(
+                          border: OutlineInputBorder(),
+                          labelText: 'Clash 订阅链接',
+                          hintText: 'https://your-subscription-url',
+                        ),
+                        onChanged: (String value) {
+                          setLocalState(() {
+                            tempProxySubscriptionUrl = value.trim();
+                          });
+                        },
+                      ),
+                      const SizedBox(height: 6),
+                      SwitchListTile(
+                        contentPadding: EdgeInsets.zero,
+                        value: tempProxyEnabled,
+                        onChanged: (bool value) {
+                          setLocalState(() {
+                            tempProxyEnabled = value;
+                          });
+                        },
+                        title: const Text('启用代理'),
+                        subtitle: const Text('127.0.0.1:7890（内建 Clash）'),
+                      ),
+                      const Divider(height: 24),
                       Align(
                         alignment: Alignment.centerLeft,
                         child: Text('Bangumi API UA'),
@@ -3357,81 +3536,6 @@ class _BangumiHomePageState extends State<BangumiHomePage>
                         onChanged: (String value) {
                           setLocalState(() {
                             tempApiUserAgent = value;
-                          });
-                        },
-                      ),
-                      const Divider(height: 24),
-                      SwitchListTile(
-                        contentPadding: EdgeInsets.zero,
-                        value: tempProxyEnabled,
-                        onChanged: (bool value) {
-                          setLocalState(() {
-                            tempProxyEnabled = value;
-                          });
-                        },
-                        title: const Text('启用代理'),
-                        subtitle: Text(
-                          tempProxyEnabled
-                              ? '已启用 $tempProxyHost:$tempProxyPort'
-                              : '已关闭，直连',
-                        ),
-                      ),
-                      const SizedBox(height: 6),
-                      Row(
-                        children: <Widget>[
-                          Expanded(
-                            flex: 3,
-                            child: TextFormField(
-                              initialValue: tempProxyHost,
-                              enabled: tempProxyEnabled,
-                              decoration: const InputDecoration(
-                                border: OutlineInputBorder(),
-                                labelText: '代理主机',
-                                hintText: '127.0.0.1',
-                              ),
-                              onChanged: (String value) {
-                                setLocalState(() {
-                                  tempProxyHost = value.trim();
-                                });
-                              },
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            flex: 1,
-                            child: TextFormField(
-                              initialValue: tempProxyPort.toString(),
-                              enabled: tempProxyEnabled,
-                              keyboardType: TextInputType.number,
-                              decoration: const InputDecoration(
-                                border: OutlineInputBorder(),
-                                labelText: '端口',
-                                hintText: '7890',
-                              ),
-                              onChanged: (String value) {
-                                final int? parsed = int.tryParse(value);
-                                if (parsed != null) {
-                                  setLocalState(() {
-                                    tempProxyPort = parsed;
-                                  });
-                                }
-                              },
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 6),
-                      TextFormField(
-                        initialValue: tempProxyBypass,
-                        enabled: tempProxyEnabled,
-                        decoration: const InputDecoration(
-                          border: OutlineInputBorder(),
-                          labelText: '绕过代理',
-                          hintText: 'localhost,127.0.0.1',
-                        ),
-                        onChanged: (String value) {
-                          setLocalState(() {
-                            tempProxyBypass = value;
                           });
                         },
                       ),
@@ -3470,6 +3574,9 @@ class _BangumiHomePageState extends State<BangumiHomePage>
       },
     );
 
+    // Save the subscription URL before setState so we can detect changes.
+    final String previousSubscriptionUrl = _settingProxySubscriptionUrl;
+
     if (confirmed != true || !mounted) {
       return;
     }
@@ -3478,9 +3585,7 @@ class _BangumiHomePageState extends State<BangumiHomePage>
     final bool timezoneChanged =
         previousTimezoneConversionEnabled != tempTimezoneConversionEnabled ||
         previousTimezoneOffsetMinutes != tempTimezoneOffsetMinutes;
-    final bool proxyChanged = previousProxyEnabled != tempProxyEnabled ||
-        previousProxyHost != tempProxyHost ||
-        previousProxyPort != tempProxyPort;
+    final bool proxyChanged = previousProxyEnabled != tempProxyEnabled;
 
     setState(() {
       _settingProgressConcurrency = tempProgressConcurrency;
@@ -3494,9 +3599,13 @@ class _BangumiHomePageState extends State<BangumiHomePage>
         tempTimezoneOffsetMinutes,
       );
       _settingProxyEnabled = tempProxyEnabled;
-      _settingProxyHost = tempProxyHost;
-      _settingProxyPort = tempProxyPort;
-      _settingProxyBypass = tempProxyBypass;
+      _settingProxyHost = defaultSettingProxyHost;
+      _settingProxyPort = defaultSettingProxyPort;
+      _settingProxyBypass = defaultSettingProxyBypass;
+      _settingProxySubscriptionUrl =
+          subscriptionCtrl.text.trim().isNotEmpty
+              ? subscriptionCtrl.text.trim()
+              : tempProxySubscriptionUrl;
       _service.apiUserAgent = _settingApiUserAgent.isEmpty
           ? appUserAgent
           : _settingApiUserAgent;
@@ -3512,6 +3621,25 @@ class _BangumiHomePageState extends State<BangumiHomePage>
         _settingProxyPort,
         _settingProxyBypass,
       );
+    }
+    // When the subscription URL changes, regenerate the clash config and
+    // restart the proxy so new nodes take effect.
+    final String effectiveNewUrl = subscriptionCtrl.text.trim().isNotEmpty
+        ? subscriptionCtrl.text.trim()
+        : tempProxySubscriptionUrl.trim();
+    if (effectiveNewUrl.isNotEmpty &&
+        effectiveNewUrl != previousSubscriptionUrl) {
+      _appendDebugLog('代理: 正在应用订阅链接…');
+      try {
+        await ClashManager.instance.stop();
+        await ClashManager.instance.applySubscription(
+          effectiveNewUrl,
+        );
+        await ClashManager.instance.start();
+        _appendDebugLog('代理: 订阅已生效');
+      } catch (e) {
+        _appendDebugLog('代理: 订阅应用失败 ($e)');
+      }
     }
     await _saveSettings();
     _appendDebugLog('网络: 当前 API UA: ${_service.effectiveApiUserAgent}');
@@ -3721,6 +3849,24 @@ class _BangumiHomePageState extends State<BangumiHomePage>
     final List<SubjectItem> todayItems = _resolveTodayItemsFromSchedule(
       schedule,
     );
+
+    // Exclude shows whose broadcast start date (from the BGMLIST archive page,
+    // JST) is still in the future.  These shows are kept in the weekly
+    // calendar but should not appear in the "today" tab.
+    final Map<String, DateTime> startDates = _service.subjectStartDates;
+    List<SubjectItem> filteredTodayItems;
+    if (startDates.isNotEmpty) {
+      final DateTime nowJst = DateTime.now().toUtc().add(
+        const Duration(hours: 9),
+      );
+      filteredTodayItems = todayItems.where((SubjectItem item) {
+        final DateTime? start = startDates[item.subjectId];
+        return start == null || !start.isAfter(nowJst);
+      }).toList();
+    } else {
+      // No start-date info (e.g. loaded from cache) — keep all.
+      filteredTodayItems = todayItems;
+    }
     final Map<String, SubjectItem> latestById = <String, SubjectItem>{
       for (final SubjectItem item in allItems)
         if (item.subjectId.isNotEmpty) item.subjectId: item,
@@ -3729,7 +3875,7 @@ class _BangumiHomePageState extends State<BangumiHomePage>
     setState(() {
       _scheduleData = schedule;
       _allItems = allItems;
-      _todayItems = todayItems;
+      _todayItems = filteredTodayItems;
       _watchlist = _watchlist.map((SubjectItem item) {
         final SubjectItem? latest = latestById[item.subjectId];
         if (latest == null) {
@@ -3956,6 +4102,210 @@ class _BangumiHomePageState extends State<BangumiHomePage>
     return _buildScheduleFromCandidates(currentSeason);
   }
 
+  /// Fetch the BGMLIST onair API and append any shows that began within the
+  /// last year and are confirmed to still be airing.  This catches half-year
+  /// (cours-spanning) titles that are not part of the current archive page.
+  Future<List<DaySchedule>> _enrichWithOnAirShows(
+    List<DaySchedule> schedule,
+  ) async {
+    try {
+      // 1. Fetch the onair JSON.
+      final String jsonText = await _service.fetchBgmListOnAirJson();
+      final dynamic decoded = jsonDecode(jsonText);
+      if (decoded is! Map<String, dynamic>) return schedule;
+      final dynamic itemsRaw = decoded['items'];
+      if (itemsRaw is! List) return schedule;
+      if (itemsRaw.isEmpty) return schedule;
+
+      // 2. Collect IDs already in the schedule.
+      final Set<String> existingIds = <String>{};
+      for (final DaySchedule day in schedule) {
+        for (final SubjectItem item in day.items) {
+          if (item.subjectId.isNotEmpty) existingIds.add(item.subjectId);
+        }
+      }
+
+      // 3. Build weekday indices.
+      final Map<String, List<SubjectItem>> enriched =
+          <String, List<SubjectItem>>{
+        for (final String wd in <String>[
+          '星期日', '星期一', '星期二', '星期三', '星期四', '星期五', '星期六',
+        ])
+          wd: <SubjectItem>[],
+      };
+      for (final DaySchedule day in schedule) {
+        enriched[day.weekday]!.addAll(day.items);
+      }
+
+      // helper: read a string from dynamic, trimming null/empty.
+      String rs(dynamic v) {
+        if (v == null) return '';
+        final String t = v.toString().trim();
+        return t == 'null' ? '' : t;
+      }
+
+      // helper: parse a date string, or null.
+      DateTime? rd(String s) {
+        try {
+          return DateTime.parse(s.trim());
+        } catch (_) {
+          return null;
+        }
+      }
+
+      // helper: parse ISO string and return JST DateTime.
+      DateTime? parseJst(String iso) {
+        try {
+          return DateTime.parse(iso).toUtc().add(const Duration(hours: 9));
+        } catch (_) {
+          return null;
+        }
+      }
+
+      // 4. Filter to candidates whose begin date is within the last year,
+      //    have a bangumi id, and aren't already in the schedule.
+      final DateTime oneYearAgo = DateTime.now().toUtc().add(
+        const Duration(hours: 9),
+      ).subtract(const Duration(days: 365));
+      final List<Map<String, dynamic>> candidates = <Map<String, dynamic>>[];
+
+      for (final dynamic raw in itemsRaw) {
+        if (raw is! Map<String, dynamic>) continue;
+        final String beginStr = rs(raw['begin']);
+        final DateTime? begin = rd(beginStr);
+        if (begin == null || begin.isBefore(oneYearAgo)) continue;
+
+        // Extract bangumi id.
+        String bgmId = '';
+        final dynamic sites = raw['sites'];
+        if (sites is List) {
+          for (final dynamic site in sites) {
+            if (site is Map<String, dynamic> &&
+                rs(site['site']).toLowerCase() == 'bangumi') {
+              bgmId = rs(site['id']);
+              if (RegExp(r'^\d+$').hasMatch(bgmId)) break;
+              bgmId = '';
+            }
+          }
+        }
+        if (bgmId.isEmpty || existingIds.contains(bgmId)) continue;
+        candidates.add(<String, dynamic>{
+          'id': bgmId,
+          'title': rs(raw['title']),
+        });
+      }
+
+      if (candidates.isEmpty) return schedule;
+
+      // 5. Check which candidates are still airing (concurrent, limited).
+      final Set<String> stillAiring = <String>{};
+      const int maxConcurrency = 4;
+      int nextIdx = 0;
+      final List<Future<void>> workers = <Future<void>>[];
+      for (int w = 0; w < maxConcurrency && w < candidates.length; w++) {
+        workers.add(Future<void>(() async {
+          while (true) {
+            final int idx;
+            idx = nextIdx;
+            nextIdx++;
+            if (idx >= candidates.length) return;
+            final String id = candidates[idx]['id'] as String;
+            try {
+              if (await _service.isSubjectStillAiring(id)) {
+                stillAiring.add(id);
+                _appendDebugLog('日历: OnAir 补充收录 $id (${candidates[idx]['title']})');
+              }
+            } catch (_) {}
+          }
+        }));
+      }
+      await Future.wait(workers);
+
+      // 6. For still-airing candidates, look up their broadcast day/time from
+      //    the onair JSON and add them to the schedule.
+      for (final dynamic raw in itemsRaw) {
+        if (raw is! Map<String, dynamic>) continue;
+        String bgmId = '';
+        final dynamic sites = raw['sites'];
+        if (sites is List) {
+          for (final dynamic site in sites) {
+            if (site is Map<String, dynamic> &&
+                rs(site['site']).toLowerCase() == 'bangumi') {
+              bgmId = rs(site['id']);
+              if (RegExp(r'^\d+$').hasMatch(bgmId)) break;
+              bgmId = '';
+            }
+          }
+        }
+        if (!stillAiring.contains(bgmId)) continue;
+
+        // Broadcast time from the onair JSON.
+        final String broadcast = rs(raw['broadcast']);
+        String weekday = '';
+        String updateTime = '';
+        if (broadcast.isNotEmpty) {
+          final RegExpMatch? m = RegExp(r'^R/([^/]+)/P(\d+)D$').firstMatch(
+            broadcast,
+          );
+          if (m != null) {
+            final DateTime? start = parseJst(m.group(1)!);
+            if (start != null) {
+              final int wd = start.weekday;
+              const List<String> wds = <String>[
+                '星期一','星期二','星期三','星期四','星期五','星期六','星期日',
+              ];
+              weekday = wds[(wd + 6) % 7];
+              updateTime =
+                  '${start.hour.toString().padLeft(2, '0')}:${start.minute.toString().padLeft(2, '0')}';
+            }
+          }
+        }
+        if (weekday.isEmpty) {
+          weekday = '星期日'; // fallback
+        }
+
+        final String jpName = rs(raw['title']);
+        // Extract Chinese name from titleTranslate if available.
+        String cnName = '';
+        final dynamic tt = raw['titleTranslate'];
+        if (tt is Map) {
+          for (final String key in <String>['zh-Hans', 'zh-Hant', 'zh']) {
+            final dynamic list = tt[key];
+            if (list is List && list.isNotEmpty) {
+              final String t = rs(list[0]);
+              if (t.isNotEmpty) { cnName = t; break; }
+            }
+          }
+        }
+        enriched[weekday]!.add(SubjectItem(
+          subjectId: bgmId,
+          subjectUrl: 'https://bangumi.tv/subject/$bgmId',
+          nameCn: cnName,
+          nameOrigin: jpName,
+          coverUrl: '',
+          updateTime: updateTime,
+        ));
+      }
+
+      // 7. Rebuild schedule in weekday order.
+      final List<DaySchedule> result = <DaySchedule>[];
+      for (final String w in <String>[
+        '星期一','星期二','星期三','星期四','星期五','星期六','星期日',
+      ]) {
+        final List<SubjectItem> items = enriched[w]!;
+        if (items.isEmpty) continue;
+        items.sort((SubjectItem a, SubjectItem b) =>
+            a.updateTime.compareTo(b.updateTime));
+        result.add(DaySchedule(weekday: w, items: items));
+      }
+      _appendDebugLog('日历: OnAir 补充 ${stillAiring.length} 部半年番');
+      return result;
+    } catch (e) {
+      _appendDebugLog('日历: OnAir 补充失败 ($e)');
+      return schedule;
+    }
+  }
+
   Future<void> _refreshCalendarSchedule({
     bool initial = false,
     bool forceNetwork = false,
@@ -3994,13 +4344,18 @@ class _BangumiHomePageState extends State<BangumiHomePage>
         _appendDebugLog('日历缓存时区不匹配，跳过缓存并重新抓取');
       }
 
-      final bool shouldRefetchBgmSource = forceNetwork || needAutoNetwork;
       final List<DaySchedule> mergedScheduleJst =
-          await _buildScheduleFromBgmListApi(
-        forceRefresh: shouldRefetchBgmSource,
-      );
+          await _service.fetchCalendarSchedule();
+      final List<DaySchedule> enrichedJst =
+          await _enrichWithOnAirShows(mergedScheduleJst);
+      final int enrichedCount =
+          enrichedJst.fold<int>(0, (int sum, DaySchedule day) => sum + day.items.length) -
+          mergedScheduleJst.fold<int>(0, (int sum, DaySchedule day) => sum + day.items.length);
+      if (enrichedCount > 0) {
+        _appendDebugLog('日历: OnAir 补充后共计 ${enrichedCount} 部');
+      }
       final List<DaySchedule> mergedSchedule = _convertScheduleFromJstForDisplay(
-        mergedScheduleJst,
+        enrichedJst,
       );
       await _calendarCacheManager.save(mergedSchedule);
       await _saveCalendarCacheTimezoneToken();

@@ -1,4 +1,4 @@
-﻿<#
+<#
 .SYNOPSIS
   Build CyberBangumi Pro Windows Release and package as ZIP.
 #>
@@ -11,7 +11,7 @@ Write-Host "=== CyberBangumi Pro Build Script ===" -ForegroundColor Cyan
 Write-Host ""
 
 # --------------- 1. Read version ---------------
-Write-Host "[1/4] Reading version..." -ForegroundColor Yellow
+Write-Host "[1/5] Reading version..." -ForegroundColor Yellow
 $PubspecPath = Join-Path $ScriptDir "pubspec.yaml"
 if (-not (Test-Path $PubspecPath)) {
     Write-Error "pubspec.yaml not found: $PubspecPath"
@@ -27,9 +27,23 @@ if (-not $VersionMatch.Success) {
 $Version = $VersionMatch.Groups[1].Value.Trim()
 Write-Host "  Version: $Version"
 
-# --------------- 2. flutter pub get ---------------
+# --------------- 2. Verify clash binary asset ---------------
 Write-Host ""
-Write-Host "[2/4] Installing dependencies (flutter pub get)..." -ForegroundColor Yellow
+Write-Host "[2/5] Verifying clash binary..." -ForegroundColor Yellow
+$ClashAsset = Join-Path $ScriptDir "assets\mihomo.exe"
+if (-not (Test-Path $ClashAsset)) {
+    Write-Warning "mihomo.exe not found at assets\mihomo.exe"
+    Write-Warning "Without it the built-in proxy will not function."
+    Write-Warning "Run: curl -sL https://github.com/MetaCubeX/mihomo/releases/download/v1.19.27/mihomo-windows-amd64-compatible-v1.19.27.zip"
+    Write-Host "  Continuing anyway..."
+} else {
+    $SizeMB = [math]::Round((Get-Item $ClashAsset).Length / 1MB, 1)
+    Write-Host "  mihomo.exe: ${SizeMB}MB"
+}
+
+# --------------- 3. flutter pub get ---------------
+Write-Host ""
+Write-Host "[3/5] Installing dependencies (flutter pub get)..." -ForegroundColor Yellow
 flutter pub get
 if ($LASTEXITCODE -ne 0) {
     Write-Error "flutter pub get failed"
@@ -37,9 +51,9 @@ if ($LASTEXITCODE -ne 0) {
 }
 Write-Host "  Dependencies installed" -ForegroundColor Green
 
-# --------------- 3. flutter build windows --release ---------------
+# --------------- 4. flutter build windows --release ---------------
 Write-Host ""
-Write-Host "[3/4] Building Windows Release..." -ForegroundColor Yellow
+Write-Host "[4/5] Building Windows Release..." -ForegroundColor Yellow
 flutter build windows --release
 if ($LASTEXITCODE -ne 0) {
     Write-Error "flutter build windows --release failed"
@@ -47,9 +61,9 @@ if ($LASTEXITCODE -ne 0) {
 }
 Write-Host "  Build completed" -ForegroundColor Green
 
-# --------------- 4. Clean and package ---------------
+# --------------- 5. Clean and package ---------------
 Write-Host ""
-Write-Host "[4/4] Cleaning runtime files and packaging ZIP..." -ForegroundColor Yellow
+Write-Host "[5/5] Cleaning runtime files and packaging ZIP..." -ForegroundColor Yellow
 
 $ReleaseDir = Join-Path $ScriptDir "build\windows\x64\runner\Release"
 if (-not (Test-Path $ReleaseDir)) {
@@ -57,9 +71,10 @@ if (-not (Test-Path $ReleaseDir)) {
     exit 1
 }
 
-# Remove runtime-generated data files
+# Remove runtime-generated data files (they will be re-created on first launch).
+# Keep app_state.json if present so the first run inherits proxy & subscription
+# settings from the developer's environment.
 $RuntimeFiles = @(
-    "app_state.json",
     "calendar_cache.json",
     "cover_cache"
 )
@@ -74,6 +89,24 @@ foreach ($Item in $RuntimeFiles) {
             Write-Host "  Removed file: $Item"
         }
     }
+}
+
+# Remove mihomo.exe from the release dir if it was extracted during a previous
+# debug run — it will be re-extracted from the Flutter asset bundle at runtime.
+$MihomoPath = Join-Path $ReleaseDir "mihomo.exe"
+if (Test-Path $MihomoPath) {
+    Remove-Item -Force $MihomoPath
+    Write-Host "  Removed extracted: mihomo.exe"
+}
+
+# Copy app_state.json from project root as seed (if present).
+$SeedState = Join-Path $ScriptDir "app_state.json"
+$TargetState = Join-Path $ReleaseDir "app_state.json"
+if (Test-Path $SeedState) {
+    Copy-Item $SeedState $TargetState -Force
+    Write-Host "  Seeded: app_state.json"
+} elseif (-not (Test-Path $TargetState)) {
+    Write-Warning "  No app_state.json found — first launch will use defaults."
 }
 
 # Package ZIP
@@ -97,10 +130,11 @@ Write-Host "  Packaged" -ForegroundColor Green
 Write-Host ""
 Write-Host "=== Build successful ===" -ForegroundColor Cyan
 Write-Host "  ZIP: $ZipPath"
+Write-Host "  Size: $([math]::Round((Get-Item $ZipPath).Length / 1MB, 1))MB"
 Write-Host ""
 Write-Host "  Contents:"
 Write-Host "    Executable: cyber_bangumi_pro.exe"
 Write-Host "    Engine DLL: flutter_windows.dll"
-Write-Host "    Compiled code: data/app.so"
-Write-Host "    Assets: data/flutter_assets/"
+Write-Host "    Clash core: data/flutter_assets/assets/mihomo.exe (extracted at runtime)"
+Write-Host "    Config seed: app_state.json"
 Write-Host ""
