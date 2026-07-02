@@ -438,6 +438,15 @@ ThemeData buildAppTheme(Brightness brightness) {
   );
 }
 
+/// Terminates the clash process synchronously on window close, without
+/// blocking the close path.
+class _ClashExitListener with WindowListener {
+  @override
+  void onWindowClose() {
+    ClashManager.instance.kill();
+  }
+}
+
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
@@ -461,6 +470,9 @@ Future<void> main() async {
       // ignore: invalid_use_of_visible_for_testing_member
       HardwareKeyboard.instance.clearState();
     });
+    // Kill the clash process immediately (synchronously) when the window
+    // closes, without blocking the close path.
+    windowManager.addListener(_ClashExitListener());
   }
 
   runApp(const BangumiApp());

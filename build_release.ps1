@@ -102,12 +102,11 @@ if (Test-Path $MihomoPath) {
 # Copy app_state.json from project root as seed (if present).
 $SeedState = Join-Path $ScriptDir "app_state.json"
 $TargetState = Join-Path $ReleaseDir "app_state.json"
-if (Test-Path $SeedState) {
-    Copy-Item $SeedState $TargetState -Force
-    Write-Host "  Seeded: app_state.json"
-} elseif (-not (Test-Path $TargetState)) {
-    Write-Warning "  No app_state.json found — first launch will use defaults."
+if (Test-Path $TargetState) {
+    Remove-Item -Force $TargetState
+    Write-Host "  Removed: existing app_state.json"
 }
+Write-Host "  Skipping app_state.json — first launch uses defaults."
 
 # Package ZIP
 $OutputDir = Join-Path $ScriptDir "release"
@@ -136,5 +135,5 @@ Write-Host "  Contents:"
 Write-Host "    Executable: cyber_bangumi_pro.exe"
 Write-Host "    Engine DLL: flutter_windows.dll"
 Write-Host "    Clash core: data/flutter_assets/assets/mihomo.exe (extracted at runtime)"
-Write-Host "    Config seed: app_state.json"
+Write-Host "    Config: default (first launch generates app_state.json)"
 Write-Host ""

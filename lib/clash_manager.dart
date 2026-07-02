@@ -156,6 +156,16 @@ class ClashManager {
     _started = false;
   }
 
+  /// Immediately terminate the clash process (no graceful wait).
+  void kill() {
+    if (_process == null) return;
+    try {
+      _process!.kill(ProcessSignal.sigkill);
+    } catch (_) {}
+    _process = null;
+    _started = false;
+  }
+
   /// Replace the current clash configuration with the given subscription URL
   /// and restart the proxy.
   ///
