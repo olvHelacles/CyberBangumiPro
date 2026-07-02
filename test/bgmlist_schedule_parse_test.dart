@@ -1,6 +1,8 @@
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:cyberbangumi_pro/main.dart';
+import 'package:cyberbangumi_pro/services/bangumi_service.dart';
+import 'package:cyberbangumi_pro/models/broadcast_types.dart';
+import 'package:cyberbangumi_pro/constants.dart';
 
 void main() {
   group('BGMLIST schedule parser', () {

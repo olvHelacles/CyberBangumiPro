@@ -50,47 +50,55 @@ class ClashManager {
         port: _apiPort,
         path: '/proxies/Proxy',
       );
-      final HttpClientRequest req = await client.getUrl(groupUri);
-      req.headers.set('Authorization', 'Bearer $_apiSecret');
-      final HttpClientResponse resp = await req.close();
-      final String body = await resp.transform(utf8.decoder).join();
-      client.close();
+      late final String now;
+      try {
+        final HttpClientRequest req = await client.getUrl(groupUri);
+        req.headers.set('Authorization', 'Bearer $_apiSecret');
+        final HttpClientResponse resp = await req.close();
+        final String body = await resp.transform(utf8.decoder).join();
 
-      if (resp.statusCode == 200) {
-        final Map<String, dynamic> data = jsonDecode(body)
-            as Map<String, dynamic>;
-        final String now = data['now'] as String? ?? '';
-        if (now.isNotEmpty) {
-          _currentNode = now;
-          _currentLatency = 0;
+        if (resp.statusCode == 200) {
+          final Map<String, dynamic> data = jsonDecode(body)
+              as Map<String, dynamic>;
+          now = data['now'] as String? ?? '';
+        } else {
+          now = '';
+        }
+      } finally {
+        // First request done; client still open for second request.
+      }
 
-          // Query the individual proxy for its latest delay.
-          try {
-            final Uri proxyUri = Uri(
-              scheme: 'http',
-              host: _apiHost,
-              port: _apiPort,
-              path: '/proxies/$now',
-            );
-            final HttpClientRequest req2 = await client.getUrl(proxyUri);
-            req2.headers.set('Authorization', 'Bearer $_apiSecret');
-            final HttpClientResponse resp2 = await req2.close();
-            final String body2 = await resp2.transform(utf8.decoder).join();
-            if (resp2.statusCode == 200) {
-              final Map<String, dynamic> proxyData = jsonDecode(body2)
-                  as Map<String, dynamic>;
-              final List<dynamic> history = proxyData['history'] as List<dynamic>? ?? <dynamic>[];
-              if (history.isNotEmpty) {
-                final Map<String, dynamic> last = history.last as Map<String, dynamic>;
-                _currentLatency = (last['delay'] as num?)?.toInt() ?? 0;
-              }
+      if (now.isNotEmpty) {
+        _currentNode = now;
+        _currentLatency = 0;
+
+        // Query the individual proxy for its latest delay.
+        try {
+          final Uri proxyUri = Uri(
+            scheme: 'http',
+            host: _apiHost,
+            port: _apiPort,
+            path: '/proxies/$now',
+          );
+          final HttpClientRequest req2 = await client.getUrl(proxyUri);
+          req2.headers.set('Authorization', 'Bearer $_apiSecret');
+          final HttpClientResponse resp2 = await req2.close();
+          final String body2 = await resp2.transform(utf8.decoder).join();
+          if (resp2.statusCode == 200) {
+            final Map<String, dynamic> proxyData = jsonDecode(body2)
+                as Map<String, dynamic>;
+            final List<dynamic> history = proxyData['history'] as List<dynamic>? ?? <dynamic>[];
+            if (history.isNotEmpty) {
+              final Map<String, dynamic> last = history.last as Map<String, dynamic>;
+              _currentLatency = (last['delay'] as num?)?.toInt() ?? 0;
             }
-            client.close();
-          } catch (_) {
-            // Non-fatal; refresh will be retried.
           }
+        } catch (_) {
+          // Non-fatal; refresh will be retried.
         }
       }
+
+      client.close();
     } catch (_) {
       // Non-fatal; refresh will be retried on next dialog open.
     }
