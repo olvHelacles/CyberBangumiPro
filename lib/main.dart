@@ -1,4 +1,4 @@
-﻿import 'dart:async';
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
@@ -6,304 +6,20 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_svg/flutter_svg.dart';
-import 'package:html/dom.dart' as dom;
-import 'package:html/parser.dart' as html_parser;
-import 'package:http/http.dart' as http;
-import 'package:http/io_client.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:window_manager/window_manager.dart';
 
-import 'clash_manager.dart';const String bgmlistArchiveBaseUrl = 'https://bgmlist.com/archive';
-const String bangumiApiBaseUrl = 'https://api.bgm.tv';
-const String bgmListOnAirApiUrl = 'https://bgmlist.com/api/v1/bangumi/onair';
-const String watchlistStorageKey = 'watchlist';
-const String calendarAutoRefreshMonthKey = 'calendar_auto_refresh_month';
-const String calendarCacheTimezoneTokenKey = 'calendar_cache_timezone_token_v1';
-const String settingsStorageKey = 'app_settings_v1';
-const String themeModeSettingKey = 'theme_mode_v1';
-const String appBarBackgroundImageEnabledSettingKey =
-  'appbar_background_image_enabled';
-const String appBarBackgroundImagePathSettingKey =
-  'appbar_background_image_path';
-const String progressCorrectionStorageKey = 'progress_corrections_v1';
-const String progressCorrectionDeltaStorageKey =
-  'progress_correction_deltas_v1';
-const String timezoneConversionEnabledSettingKey =
-    'timezone_conversion_enabled';
-const String timezoneOffsetMinutesSettingKey = 'timezone_offset_minutes';
-const String proxyEnabledSettingKey = 'proxy_enabled';
-const String proxyHostSettingKey = 'proxy_host';
-const String proxyPortSettingKey = 'proxy_port';
-const String proxySubscriptionUrlSettingKey = 'proxy_subscription_url';
-const String proxyBypassSettingKey = 'proxy_bypass';
-const String appUserAgent = 'OlvSilence/my-private-project';
-const String browserUserAgent =
-    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
-    '(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
-
-const Map<int, String> weekdayMap = <int, String>{
-  1: '星期一',
-  2: '星期二',
-  3: '星期三',
-  4: '星期四',
-  5: '星期五',
-  6: '星期六',
-  7: '星期日',
-};
-
-const Map<String, String> requestHeaders = <String, String>{
-  'User-Agent': browserUserAgent,
-  'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-};
-
-const Map<String, String> imageRequestHeaders = <String, String>{
-  'Referer': 'https://bangumi.tv/',
-  'User-Agent': browserUserAgent,
-};
-
-const List<String> sansFallbacks = <String>[
-  'Microsoft YaHei',
-  'Microsoft YaHei UI',
-  'PingFang SC',
-  'Noto Sans CJK SC',
-  'Noto Sans SC',
-];
-
-const int defaultSettingProgressConcurrency = 10;
-const int defaultSettingCoverCacheConcurrency = 12;
-const bool defaultSettingTimezoneConversionEnabled = true;
-const int defaultSettingTimezoneOffsetMinutes = 8 * 60;
-const bool defaultSettingProxyEnabled = true;
-const String defaultSettingProxyHost = '127.0.0.1';
-const int defaultSettingProxyPort = 7890;
-const String defaultSettingProxyBypass = 'localhost,127.0.0.1';
-const String defaultSettingProxySubscriptionUrl = '';
-
-/// BroadcastScheduleHint：组件或数据结构定义。
-class BroadcastScheduleHint {
-  const BroadcastScheduleHint({required this.weekday, required this.time});
-
-  final String weekday;
-  final String time;
-}
-
-/// ConvertedWeekdayTime：组件或数据结构定义。
-class ConvertedWeekdayTime {
-  const ConvertedWeekdayTime({required this.weekday, required this.time});
-
-  final String weekday;
-  final String time;
-}
-
-/// BgmListOnAirEntry：组件或数据结构定义。
-class BgmListOnAirEntry {
-  const BgmListOnAirEntry({required this.timeJst, required this.jpTitles});
-
-  final String timeJst;
-  final List<String> jpTitles;
-}
-
-/// BgmListScheduleCandidate：BGMLIST 直接构建周历所需字段。
-class BgmListScheduleCandidate {
-  const BgmListScheduleCandidate({
-    required this.subjectId,
-    required this.subjectUrl,
-    required this.titleJp,
-    required this.titleCn,
-    required this.coverUrl,
-    required this.weekdayJst,
-    required this.updateTimeJst,
-    required this.beginJst,
-    required this.periodDays,
-  });
-
-  final String subjectId;
-  final String subjectUrl;
-  final String titleJp;
-  final String titleCn;
-  final String coverUrl;
-  final String weekdayJst;
-  final String updateTimeJst;
-  final DateTime beginJst;
-  final int periodDays;
-}
-
-/// BroadcastTimeConverter：组件或数据结构定义。
-class BroadcastTimeConverter {
-  static const int jstOffsetMinutes = 9 * 60;
-  static const int minTimezoneOffsetMinutes = -12 * 60;
-  static const int maxTimezoneOffsetMinutes = 14 * 60;
-
-  
-  static int normalizeTimezoneOffsetMinutes(int value) {
-    return value.clamp(minTimezoneOffsetMinutes, maxTimezoneOffsetMinutes);
-  }
-
-  
-  static String formatUtcOffsetLabel(int offsetMinutes) {
-    final int normalized = normalizeTimezoneOffsetMinutes(offsetMinutes);
-    final String sign = normalized >= 0 ? '+' : '-';
-    final int absMinutes = normalized.abs();
-    final int hour = absMinutes ~/ 60;
-    final int minute = absMinutes % 60;
-    if (minute == 0) {
-      return 'UTC$sign$hour';
-    }
-    return 'UTC$sign$hour:${minute.toString().padLeft(2, '0')}';
-  }
-
-  
-  static int? weekdayToIndex(String weekdayText) {
-    final String value = weekdayText.trim();
-    if (value.isEmpty) {
-      return null;
-    }
-    for (final MapEntry<int, String> entry in weekdayMap.entries) {
-      if (entry.value == value) {
-        return entry.key;
-      }
-    }
-    return null;
-  }
-
-  
-  static String weekdayFromIndex(int index) {
-    final int wrapped = _wrapWeekday(index);
-    return weekdayMap[wrapped] ?? '星期一';
-  }
-
-  
-  static int _wrapWeekday(int value) {
-    return _positiveMod(value - 1, 7) + 1;
-  }
-
-  
-  static int _positiveMod(int value, int modulo) {
-    final int result = value % modulo;
-    return result < 0 ? result + modulo : result;
-  }
-
-  
-  static int _floorDiv(int value, int divisor) {
-    if (divisor == 0) {
-      throw ArgumentError('divisor cannot be zero');
-    }
-    final int positiveDivisor = divisor < 0 ? -divisor : divisor;
-    if (value >= 0) {
-      return value ~/ positiveDivisor;
-    }
-    return -(((-value) + positiveDivisor - 1) ~/ positiveDivisor);
-  }
-
-  
-  static int? parseClockMinutes(String timeText, {int maxHour = 47}) {
-    final RegExpMatch? match = RegExp(
-      r'^(\d{1,2}):(\d{2})$',
-    ).firstMatch(timeText.trim());
-    if (match == null) {
-      return null;
-    }
-    final int? hour = int.tryParse(match.group(1) ?? '');
-    final int? minute = int.tryParse(match.group(2) ?? '');
-    if (hour == null || minute == null) {
-      return null;
-    }
-    if (hour < 0 || hour > maxHour || minute < 0 || minute > 59) {
-      return null;
-    }
-    return hour * 60 + minute;
-  }
-
-  
-  static String formatClockMinutes(int minutes) {
-    final int normalized = _positiveMod(minutes, 24 * 60);
-    final int hour = normalized ~/ 60;
-    final int minute = normalized % 60;
-    return '${hour.toString().padLeft(2, '0')}:${minute.toString().padLeft(2, '0')}';
-  }
-
-  static ConvertedWeekdayTime? convertWeekdayAndTime({
-    required String weekday,
-    required String time,
-    required int fromOffsetMinutes,
-    required int toOffsetMinutes,
-  }) {
-    final int? weekdayIndex = weekdayToIndex(weekday);
-    final int? sourceMinutes = parseClockMinutes(time);
-    if (weekdayIndex == null || sourceMinutes == null) {
-      return null;
-    }
-
-    final int normalizedFrom = normalizeTimezoneOffsetMinutes(
-      fromOffsetMinutes,
-    );
-    final int normalizedTo = normalizeTimezoneOffsetMinutes(toOffsetMinutes);
-
-    final int sourceDayCarry = sourceMinutes ~/ (24 * 60);
-    final int sourceMinuteInDay = _positiveMod(sourceMinutes, 24 * 60);
-    final int sourceWeekday = _wrapWeekday(weekdayIndex + sourceDayCarry);
-    final int delta = normalizedTo - normalizedFrom;
-
-    final int targetAbsolute = sourceMinuteInDay + delta;
-    final int targetDayCarry = _floorDiv(targetAbsolute, 24 * 60);
-    final int targetMinuteInDay = _positiveMod(targetAbsolute, 24 * 60);
-    final int targetWeekday = _wrapWeekday(sourceWeekday + targetDayCarry);
-
-    return ConvertedWeekdayTime(
-      weekday: weekdayFromIndex(targetWeekday),
-      time: formatClockMinutes(targetMinuteInDay),
-    );
-  }
-
-  static DateTime? resolveEpisodeBroadcastInDisplayTime({
-    required DateTime airdateJst,
-    required String displayTime,
-    required int displayOffsetMinutes,
-    String displayWeekday = '',
-  }) {
-    final int? displayMinutesRaw = parseClockMinutes(displayTime);
-    if (displayMinutesRaw == null) {
-      return null;
-    }
-
-    final int normalizedDisplayOffset = normalizeTimezoneOffsetMinutes(
-      displayOffsetMinutes,
-    );
-    final int displayDayCarry = displayMinutesRaw ~/ (24 * 60);
-    final int displayMinuteInDay = _positiveMod(displayMinutesRaw, 24 * 60);
-
-    final int jstAbsolute =
-        displayMinuteInDay + (jstOffsetMinutes - normalizedDisplayOffset);
-    final int jstDayCarry = displayDayCarry + _floorDiv(jstAbsolute, 24 * 60);
-    final int jstMinuteInDay = _positiveMod(jstAbsolute, 24 * 60);
-
-    // Use UTC baseline to avoid mixing local and UTC DateTime semantics.
-    final DateTime jstDate = DateTime.utc(
-      airdateJst.year,
-      airdateJst.month,
-      airdateJst.day,
-    ).add(Duration(days: jstDayCarry));
-    final DateTime jstMomentUtc = jstDate.add(
-      Duration(minutes: jstMinuteInDay - jstOffsetMinutes),
-    );
-    DateTime displayMoment = jstMomentUtc.add(
-      Duration(minutes: normalizedDisplayOffset),
-    );
-
-    final int? expectedWeekday = weekdayToIndex(displayWeekday);
-    if (expectedWeekday == null) {
-      return displayMoment;
-    }
-
-    final int forward = (expectedWeekday - displayMoment.weekday + 7) % 7;
-    final int backward = forward - 7;
-    final int shiftDays =
-        forward.abs() <= backward.abs() ? forward : backward;
-    displayMoment = displayMoment.add(Duration(days: shiftDays));
-    return displayMoment;
-  }
-}
-
+import 'clash_manager.dart';
+import 'constants.dart';
+import 'models/broadcast_types.dart';
+import 'models/subject_item.dart';
+import 'models/subject_progress.dart';
+import 'models/watch_archive_entry.dart';
+import 'services/bangumi_service.dart';
+import 'stores/app_state_store.dart';
+import 'stores/calendar_cache_manager.dart';
+import 'stores/cover_cache_manager.dart';
+import 'stores/watch_archive_store.dart';
 
 TextStyle _styleWithWeight(TextStyle? base, FontWeight weight) {
   return (base ?? const TextStyle()).copyWith(
@@ -313,7 +29,7 @@ TextStyle _styleWithWeight(TextStyle? base, FontWeight weight) {
   );
 }
 
-/// _BottomEdgeOnlyClipper：组件或数据结构定义。
+/// _BottomEdgeOnlyClipper
 class _BottomEdgeOnlyClipper extends CustomClipper<Rect> {
   const _BottomEdgeOnlyClipper();
 
@@ -478,7 +194,7 @@ Future<void> main() async {
   runApp(const BangumiApp());
 }
 
-/// BangumiApp：组件或数据结构定义。
+/// BangumiApp
 class BangumiApp extends StatefulWidget {
   const BangumiApp({super.key});
 
@@ -486,7 +202,7 @@ class BangumiApp extends StatefulWidget {
   State<BangumiApp> createState() => _BangumiAppState();
 }
 
-/// _BangumiAppState：组件或数据结构定义。
+/// _BangumiAppState
 class _BangumiAppState extends State<BangumiApp> {
   final AppStateStore _appStateStore = AppStateStore();
   ThemeMode _themeMode = ThemeMode.system;
@@ -542,2054 +258,7 @@ class _BangumiAppState extends State<BangumiApp> {
   }
 }
 
-/// SubjectItem：组件或数据结构定义。
-class SubjectItem {
-  const SubjectItem({
-    required this.subjectId,
-    required this.subjectUrl,
-    required this.nameCn,
-    required this.nameOrigin,
-    required this.coverUrl,
-    this.updateTime = '',
-    this.localCoverPath = '',
-  });
-
-  final String subjectId;
-  final String subjectUrl;
-  final String nameCn;
-  final String nameOrigin;
-  final String coverUrl;
-  final String updateTime;
-  final String localCoverPath;
-
-  
-  static String _readJsonString(dynamic value) {
-    if (value == null) {
-      return '';
-    }
-    final String text = value.toString().trim();
-    return text == 'null' ? '' : text;
-  }
-
-  String get displayName => nameCn.isNotEmpty ? nameCn : nameOrigin;
-
-  factory SubjectItem.fromJson(Map<String, dynamic> json) {
-    return SubjectItem(
-      subjectId: _readJsonString(json['subject_id']),
-      subjectUrl: _readJsonString(json['subject_url']),
-      nameCn: _readJsonString(json['name_cn']),
-      nameOrigin: _readJsonString(json['name_origin']),
-      coverUrl: _readJsonString(json['cover_url']),
-      updateTime: _readJsonString(json['update_time']),
-    );
-  }
-
-  SubjectItem copyWith({
-    String? subjectId,
-    String? subjectUrl,
-    String? nameCn,
-    String? nameOrigin,
-    String? coverUrl,
-    String? updateTime,
-    String? localCoverPath,
-  }) {
-    return SubjectItem(
-      subjectId: subjectId ?? this.subjectId,
-      subjectUrl: subjectUrl ?? this.subjectUrl,
-      nameCn: nameCn ?? this.nameCn,
-      nameOrigin: nameOrigin ?? this.nameOrigin,
-      coverUrl: coverUrl ?? this.coverUrl,
-      updateTime: updateTime ?? this.updateTime,
-      localCoverPath: localCoverPath ?? this.localCoverPath,
-    );
-  }
-
-  
-  Map<String, dynamic> toJson() {
-    return <String, dynamic>{
-      'subject_id': subjectId,
-      'subject_url': subjectUrl,
-      'name_cn': nameCn,
-      'name_origin': nameOrigin,
-      'cover_url': coverUrl,
-      'update_time': updateTime,
-    };
-  }
-}
-
-/// DaySchedule：组件或数据结构定义。
-class DaySchedule {
-  const DaySchedule({required this.weekday, required this.items});
-
-  final String weekday;
-  final List<SubjectItem> items;
-
-  factory DaySchedule.fromJson(Map<String, dynamic> json) {
-    final List<dynamic> rawItems =
-        (json['items'] as List<dynamic>?) ?? <dynamic>[];
-    return DaySchedule(
-      weekday: (json['weekday'] ?? '').toString(),
-      items: rawItems
-          .whereType<Map<String, dynamic>>()
-          .map(SubjectItem.fromJson)
-          .toList(),
-    );
-  }
-
-  
-  Map<String, dynamic> toJson() {
-    return <String, dynamic>{
-      'weekday': weekday,
-      'items': items.map((SubjectItem item) => item.toJson()).toList(),
-    };
-  }
-}
-
-/// SubjectProgress：组件或数据结构定义。
-class SubjectProgress {
-  const SubjectProgress({
-    this.totalEpsDeclared,
-    this.totalEpsListed,
-    this.airedEps,
-    this.latestAiredEp,
-    this.latestAiredCnTitle,
-    this.nextEp,
-    this.ratingScore,
-    this.episodeCommentCounts = const <int>[],
-    this.episodeTitleByEp = const <int, String>{},
-    this.progressText,
-    this.latestAiredAtLabel,
-    this.error,
-  });
-
-  final int? totalEpsDeclared;
-  final int? totalEpsListed;
-  final int? airedEps;
-  final int? latestAiredEp;
-  final String? latestAiredCnTitle;
-  final int? nextEp;
-  final double? ratingScore;
-  final List<int> episodeCommentCounts;
-  final Map<int, String> episodeTitleByEp;
-  final String? progressText;
-  final String? latestAiredAtLabel;
-  final String? error;
-}
-
-/// SubjectBasicInfo：组件或数据结构定义。
-class SubjectBasicInfo {
-  const SubjectBasicInfo({
-    this.totalEpsDeclared,
-    this.airStart = '',
-    this.airWeekday = '',
-  });
-
-  final int? totalEpsDeclared;
-  final String airStart;
-  final String airWeekday;
-}
-
-/// EpisodeProgress：组件或数据结构定义。
-class EpisodeProgress {
-  const EpisodeProgress({
-    required this.totalEpsListed,
-    required this.airedEps,
-    this.latestAiredEp,
-    this.latestAiredEpId,
-    this.latestAiredOriginTitle,
-    this.nextEp,
-  });
-
-  final int totalEpsListed;
-  final int airedEps;
-  final int? latestAiredEp;
-  final String? latestAiredEpId;
-  final String? latestAiredOriginTitle;
-  final int? nextEp;
-}
-
-/// EpisodeCommentChartLayout：组件或数据结构定义。
-class EpisodeCommentChartLayout {
-  const EpisodeCommentChartLayout({
-    this.alignment = Alignment.centerRight,
-    this.offsetX = 0,
-    this.offsetY = 0,
-    this.width = 300,
-    this.height = 52,
-    this.headerHeight = 16,
-    this.headerBottomGap = 4,
-    this.barGap = 2,
-    this.minBarHeight = 2,
-    this.backgroundRadius = 12,
-    this.contentPaddingHorizontal = 10,
-    this.contentPaddingVertical = 8,
-    this.backgroundColor = const Color(0x00000000),
-    this.backgroundBorderColor = const Color(0x00000000),
-  });
-
-  final Alignment alignment;
-  final double offsetX;
-  final double offsetY;
-  final double width;
-  final double height;
-  final double headerHeight;
-  final double headerBottomGap;
-  final double barGap;
-  final double minBarHeight;
-  final double backgroundRadius;
-  final double contentPaddingHorizontal;
-  final double contentPaddingVertical;
-  final Color backgroundColor;
-  final Color backgroundBorderColor;
-}
-
-/// CoverCacheManager：组件或数据结构定义。
-class CoverCacheManager {
-  static const List<String> _knownExtensions = <String>[
-    'jpg',
-    'jpeg',
-    'png',
-    'webp',
-    'gif',
-    'img',
-  ];
-
-  Directory? _cacheDir;
-
-  
-  Directory _resolveCacheBaseDir() {
-    // Always persist under the workspace/project directory.
-    return Directory.current;
-  }
-
-  Future<Directory> _ensureCacheDir() async {
-    if (_cacheDir != null) {
-      return _cacheDir!;
-    }
-
-    final Directory appDir = _resolveCacheBaseDir();
-    final Directory cacheDir = Directory(
-      '${appDir.path}${Platform.pathSeparator}cover_cache',
-    );
-    if (!await cacheDir.exists()) {
-      await cacheDir.create(recursive: true);
-    }
-    _cacheDir = cacheDir;
-    return cacheDir;
-  }
-
-  Future<bool> isCacheDirMissingInAppDir() async {
-    final Directory appDir = _resolveCacheBaseDir();
-    final Directory cacheDir = Directory(
-      '${appDir.path}${Platform.pathSeparator}cover_cache',
-    );
-    return !await cacheDir.exists();
-  }
-
-  
-  String _fileExtFromUrl(String imageUrl) {
-    final Uri? uri = Uri.tryParse(imageUrl);
-    if (uri == null) {
-      return 'img';
-    }
-    final String path = uri.path.toLowerCase();
-    if (path.endsWith('.jpg')) return 'jpg';
-    if (path.endsWith('.jpeg')) return 'jpeg';
-    if (path.endsWith('.png')) return 'png';
-    if (path.endsWith('.webp')) return 'webp';
-    if (path.endsWith('.gif')) return 'gif';
-    return 'img';
-  }
-
-  Future<String?> getCachedPath(String subjectId) async {
-    if (subjectId.isEmpty) {
-      return null;
-    }
-    final Directory primaryDir = await _ensureCacheDir();
-    final Directory workspaceDir = Directory(
-      '${Directory.current.path}${Platform.pathSeparator}cover_cache',
-    );
-
-    final List<Directory> candidateDirs = <Directory>[primaryDir];
-    if (workspaceDir.path != primaryDir.path) {
-      candidateDirs.add(workspaceDir);
-    }
-
-    for (final Directory dir in candidateDirs) {
-      for (final String ext in _knownExtensions) {
-        final File file = File(
-          '${dir.path}${Platform.pathSeparator}$subjectId.$ext',
-        );
-        if (await file.exists()) {
-          return file.path;
-        }
-      }
-    }
-    return null;
-  }
-
-  Future<String?> ensureCached({
-    required String subjectId,
-    required String imageUrl,
-    required Future<http.Response> Function(String url) fetch,
-  }) async {
-    if (subjectId.isEmpty || imageUrl.isEmpty) {
-      return null;
-    }
-
-    final String? cached = await getCachedPath(subjectId);
-    if (cached != null) {
-      return cached;
-    }
-
-    final Directory dir = await _ensureCacheDir();
-    final String ext = _fileExtFromUrl(imageUrl);
-    final File file = File(
-      '${dir.path}${Platform.pathSeparator}$subjectId.$ext',
-    );
-
-    final http.Response response = await fetch(imageUrl);
-    if (response.statusCode < 200 || response.statusCode >= 300) {
-      return null;
-    }
-
-    await file.writeAsBytes(response.bodyBytes, flush: true);
-    return file.path;
-  }
-
-  Future<int> clearAll() async {
-    final Directory dir = await _ensureCacheDir();
-    if (!await dir.exists()) {
-      return 0;
-    }
-
-    int deleted = 0;
-    await for (final FileSystemEntity entry in dir.list()) {
-      if (entry is File) {
-        await entry.delete();
-        deleted += 1;
-      }
-    }
-    return deleted;
-  }
-}
-
-/// CalendarCacheManager：组件或数据结构定义。
-class CalendarCacheManager {
-  static const String _cacheFileName = 'calendar_cache.json';
-
-  File? _cacheFile;
-
-  
-  Directory _resolveCalendarCacheDir() {
-    // Always persist under the workspace/project directory.
-    return Directory.current;
-  }
-
-  Future<File> _ensureCacheFile() async {
-    if (_cacheFile != null) {
-      return _cacheFile!;
-    }
-
-    final Directory targetDir = _resolveCalendarCacheDir();
-    _cacheFile = File(
-      '${targetDir.path}${Platform.pathSeparator}$_cacheFileName',
-    );
-    return _cacheFile!;
-  }
-
-  Future<List<DaySchedule>> load() async {
-    final File file = await _ensureCacheFile();
-    if (!await file.exists()) {
-      return <DaySchedule>[];
-    }
-
-    final String raw = await file.readAsString();
-    if (raw.trim().isEmpty) {
-      return <DaySchedule>[];
-    }
-
-    final dynamic decoded = jsonDecode(raw);
-    if (decoded is! List<dynamic>) {
-      return <DaySchedule>[];
-    }
-
-    return decoded
-        .whereType<Map<String, dynamic>>()
-        .map(DaySchedule.fromJson)
-        .toList();
-  }
-
-  Future<void> save(List<DaySchedule> schedule) async {
-    final File file = await _ensureCacheFile();
-    final String raw = const JsonEncoder.withIndent(
-      '  ',
-    ).convert(schedule.map((DaySchedule day) => day.toJson()).toList());
-    await file.writeAsString(raw, flush: true);
-  }
-}
-
-/// AppStateStore：组件或数据结构定义。
-class AppStateStore {
-  static const String _stateFileName = 'app_state.json';
-
-  
-  File _resolveStateFile() {
-    return File(
-      '${Directory.current.path}${Platform.pathSeparator}$_stateFileName',
-    );
-  }
-
-  Future<Map<String, dynamic>> readState() async {
-    final File file = _resolveStateFile();
-    if (!await file.exists()) {
-      return <String, dynamic>{};
-    }
-
-    try {
-      final String raw = await file.readAsString();
-      if (raw.trim().isEmpty) {
-        return <String, dynamic>{};
-      }
-      final dynamic decoded = jsonDecode(raw);
-      if (decoded is Map<String, dynamic>) {
-        return decoded;
-      }
-      return <String, dynamic>{};
-    } catch (_) {
-      return <String, dynamic>{};
-    }
-  }
-
-  Future<void> writeState(Map<String, dynamic> state) async {
-    final File file = _resolveStateFile();
-    final String raw = const JsonEncoder.withIndent('  ').convert(state);
-    await file.writeAsString(raw, flush: true);
-  }
-}
-
-/// WatchArchiveEntry：组件或数据结构定义。
-class WatchArchiveEntry {
-  const WatchArchiveEntry({
-    required this.subjectId,
-    required this.nameCn,
-    required this.nameJp,
-    required this.quarter,
-    required this.text,
-    required this.archivedAt,
-  });
-
-  final String subjectId;
-  final String nameCn;
-  final String nameJp;
-  final String quarter;
-  final String text;
-  final String archivedAt;
-
-  factory WatchArchiveEntry.fromSubject(
-    SubjectItem item, {
-    required String quarter,
-  }) {
-    final String cn = item.nameCn.trim();
-    final String jpRaw = item.nameOrigin.trim();
-    final String jp = jpRaw.isNotEmpty
-        ? jpRaw
-        : (item.displayName.isNotEmpty ? item.displayName : item.subjectId);
-    final String text = cn.isNotEmpty
-        ? '$cn / $jp（$quarter）'
-        : '$jp（$quarter）';
-
-    return WatchArchiveEntry(
-      subjectId: item.subjectId,
-      nameCn: cn,
-      nameJp: jp,
-      quarter: quarter,
-      text: text,
-      archivedAt: DateTime.now().toIso8601String(),
-    );
-  }
-
-  factory WatchArchiveEntry.fromJson(Map<String, dynamic> json) {
-    return WatchArchiveEntry(
-      subjectId: (json['subject_id'] ?? '').toString(),
-      nameCn: (json['name_cn'] ?? '').toString(),
-      nameJp: (json['name_jp'] ?? '').toString(),
-      quarter: (json['quarter'] ?? '').toString(),
-      text: (json['text'] ?? '').toString(),
-      archivedAt: (json['archived_at'] ?? '').toString(),
-    );
-  }
-
-  
-  Map<String, dynamic> toJson() {
-    return <String, dynamic>{
-      'subject_id': subjectId,
-      'name_cn': nameCn,
-      'name_jp': nameJp,
-      'quarter': quarter,
-      'text': text,
-      'archived_at': archivedAt,
-    };
-  }
-}
-
-/// WatchArchiveStore：组件或数据结构定义。
-class WatchArchiveStore {
-  static const String _archiveFileName = 'watch_archive.json';
-
-  
-  File _resolveArchiveFile() {
-    return File(
-      '${Directory.current.path}${Platform.pathSeparator}$_archiveFileName',
-    );
-  }
-
-  Future<List<WatchArchiveEntry>> load() async {
-    final File file = _resolveArchiveFile();
-    if (!await file.exists()) {
-      await file.writeAsString('[]', flush: true);
-      return <WatchArchiveEntry>[];
-    }
-
-    try {
-      final String raw = await file.readAsString();
-      if (raw.trim().isEmpty) {
-        return <WatchArchiveEntry>[];
-      }
-      final dynamic decoded = jsonDecode(raw);
-      if (decoded is! List<dynamic>) {
-        return <WatchArchiveEntry>[];
-      }
-      return decoded
-          .whereType<Map<String, dynamic>>()
-          .map(WatchArchiveEntry.fromJson)
-          .toList();
-    } catch (_) {
-      return <WatchArchiveEntry>[];
-    }
-  }
-
-  Future<void> save(List<WatchArchiveEntry> entries) async {
-    final File file = _resolveArchiveFile();
-    final String raw = const JsonEncoder.withIndent('  ').convert(
-      entries.map((WatchArchiveEntry e) => e.toJson()).toList(),
-    );
-    await file.writeAsString(raw, flush: true);
-  }
-
-  Future<void> appendEntries(List<WatchArchiveEntry> entries) async {
-    if (entries.isEmpty) {
-      return;
-    }
-    final List<WatchArchiveEntry> current = await load();
-    current.addAll(entries);
-    await save(current);
-  }
-}
-
-/// BangumiService：组件或数据结构定义。
-class BangumiService {
-  BangumiService({http.Client? client})
-    : _ownsClient = client == null,
-      _proxyEnabled = false,
-      _proxyHost = '127.0.0.1',
-      _proxyPort = 7890,
-      _proxyBypassList = const <String>['localhost', '127.0.0.1'],
-      _subjectStartDates = <String, DateTime>{} {
-    if (client != null) {
-      _client = client;
-      _insecureTlsClient = IOClient(_createHttpClient(allowBadCertificate: true));
-    } else {
-      final HttpClient normal = _createHttpClient();
-      _applyProxy(normal);
-      _client = IOClient(normal);
-      final HttpClient insecure = _createHttpClient(allowBadCertificate: true);
-      _applyProxy(insecure);
-      _insecureTlsClient = IOClient(insecure);
-    }
-  }
-
-  static const Duration _minRequestInterval = Duration(milliseconds: 800);
-  static const Duration _apiHealthCacheTtl = Duration(minutes: 3);
-  static const Set<String> _tlsFallbackHosts = <String>{
-    'bangumi.tv',
-    'api.bgm.tv',
-    'bgmlist.com',
-    'lain.bgm.tv',
-  };
-
-  late http.Client _client;
-  final bool _ownsClient;
-  late http.Client _insecureTlsClient;
-  final ValueNotifier<int> _activeRequests = ValueNotifier<int>(0);
-  DateTime _lastRequestAt = DateTime.fromMillisecondsSinceEpoch(0);
-  Future<void> _requestQueue = Future<void>.value();
-  int apiFastRetryBaseDelayMs = 120;
-  String apiUserAgent = appUserAgent;
-  final Map<String, DateTime> _subjectStartDates;
-  Map<String, DateTime> get subjectStartDates =>
-      Map<String, DateTime>.unmodifiable(_subjectStartDates);
-  bool allowInsecureTlsFallback = true;
-  bool? _apiAvailableCache;
-  DateTime? _apiAvailableCheckedAt;
-  void Function(String message)? onNetworkLog;
-
-  bool _proxyEnabled;
-  String _proxyHost;
-  int _proxyPort;
-  List<String> _proxyBypassList;
-
-  ValueNotifier<int> get activeRequests => _activeRequests;
-
-  
-  void _logNetwork(String message) {
-    onNetworkLog?.call('网络: $message');
-  }
-
-  String get effectiveApiUserAgent {
-    final String candidate = apiUserAgent.trim();
-    return candidate.isEmpty ? appUserAgent : candidate;
-  }
-
-  Map<String, String> get _apiRequestHeaders => <String, String>{
-        'User-Agent': apiUserAgent.trim().isEmpty ? appUserAgent : apiUserAgent,
-        'Accept': 'application/json',
-      };
-
-  
-  String _describeUrl(String rawUrl) {
-    try {
-      final Uri uri = Uri.parse(rawUrl);
-      final String path = uri.path.isEmpty ? '/' : uri.path;
-      return '${uri.scheme}://${uri.host}$path';
-    } catch (_) {
-      return rawUrl;
-    }
-  }
-
-  static HttpClient _createHttpClient({bool allowBadCertificate = false}) {
-    final HttpClient client = HttpClient();
-    if (allowBadCertificate) {
-      client.badCertificateCallback = (
-        X509Certificate cert,
-        String host,
-        int port,
-      ) => true;
-    }
-    return client;
-  }
-
-  bool _shouldBypassProxy(String host) {
-    for (final String entry in _proxyBypassList) {
-      if (entry.startsWith('*')) {
-        if (host.endsWith(entry.substring(1))) return true;
-      } else {
-        if (host == entry) return true;
-      }
-    }
-    return false;
-  }
-
-  void _applyProxy(HttpClient client) {
-    if (!_proxyEnabled) return;
-    final String proxyAddress = 'PROXY $_proxyHost:$_proxyPort';
-    client.findProxy = (Uri uri) {
-      if (_shouldBypassProxy(uri.host)) return 'DIRECT';
-      return proxyAddress;
-    };
-  }
-
-  /// 更新代理配置并重新创建底层 HTTP 客户端。
-  void updateProxySettings(
-    bool enabled,
-    String host,
-    int port,
-    String bypass,
-  ) {
-    _proxyEnabled = enabled;
-    _proxyHost = host;
-    _proxyPort = port;
-    _proxyBypassList = bypass
-        .split(',')
-        .map((String s) => s.trim())
-        .where((String s) => s.isNotEmpty)
-        .toList();
-
-    final HttpClient newClient = _createHttpClient();
-    _applyProxy(newClient);
-    if (_ownsClient) _client.close();
-    _client = IOClient(newClient);
-
-    final HttpClient newInsecureClient = _createHttpClient(allowBadCertificate: true);
-    _applyProxy(newInsecureClient);
-    _insecureTlsClient.close();
-    _insecureTlsClient = IOClient(newInsecureClient);
-
-    _logNetwork(
-      '代理配置已更新: ${_proxyEnabled ? "$_proxyHost:$_proxyPort" : "直连"}',
-    );
-  }
-
-  bool _isTlsCertificateFailure(Object error) {
-    final String message = error.toString().toUpperCase();
-    return message.contains('HANDSHAKEEXCEPTION') ||
-        message.contains('CERTIFICATE_VERIFY_FAILED');
-  }
-
-  bool _shouldTryInsecureTlsFallback(Uri uri, Object error) {
-    if (!allowInsecureTlsFallback || uri.scheme.toLowerCase() != 'https') {
-      return false;
-    }
-    if (!_tlsFallbackHosts.contains(uri.host.toLowerCase())) {
-      return false;
-    }
-    return _isTlsCertificateFailure(error);
-  }
-
-  Future<http.Response> _getWithTlsFallback(
-    Uri uri, {
-    required Map<String, String> headers,
-    required String purpose,
-  }) async {
-    try {
-      return await _client
-          .get(uri, headers: headers)
-          .timeout(const Duration(seconds: 15));
-    } catch (e) {
-      if (!_shouldTryInsecureTlsFallback(uri, e)) {
-        rethrow;
-      }
-
-      _logNetwork(
-        'TLS 证书校验失败[$purpose] ${_describeUrl(uri.toString())}，'
-        '对该域名启用兼容重试（不安全 TLS）',
-      );
-      return _insecureTlsClient
-          .get(uri, headers: headers)
-          .timeout(const Duration(seconds: 15));
-    }
-  }
-
-  void dispose() {
-    if (_ownsClient) {
-      _client.close();
-    }
-    _insecureTlsClient.close();
-    _activeRequests.dispose();
-  }
-
-  Future<T> _runTrackedRequest<T>(Future<T> Function() operation) async {
-    _activeRequests.value += 1;
-    try {
-      return await operation();
-    } finally {
-      if (_activeRequests.value > 0) {
-        _activeRequests.value -= 1;
-      }
-    }
-  }
-
-  
-  Future<void> _waitForRequestSlot() {
-    _requestQueue = _requestQueue.then((_) async {
-      final Duration elapsed = DateTime.now().difference(_lastRequestAt);
-      if (elapsed < _minRequestInterval) {
-        await Future<void>.delayed(_minRequestInterval - elapsed);
-      }
-      _lastRequestAt = DateTime.now();
-    });
-    return _requestQueue;
-  }
-
-  
-  String _normalizeImageUrl(String raw) {
-    final String value = raw.trim();
-    if (value.isEmpty) {
-      return '';
-    }
-
-    final String unescaped = value.replaceAll('&amp;', '&');
-
-    if (unescaped.startsWith('//lain.bgm.tv/')) {
-      return 'https:$unescaped';
-    }
-    if (unescaped.startsWith('http://lain.bgm.tv/')) {
-      return unescaped.replaceFirst('http://', 'https://');
-    }
-    if (unescaped.startsWith('https://lain.bgm.tv/')) {
-      return unescaped;
-    }
-
-    if (unescaped.contains('/pic/cover/')) {
-      final String pathOnly = unescaped
-          .replaceFirst(RegExp(r'^https?://[^/]+'), '')
-          .replaceFirst(RegExp(r'^//[^/]+'), '');
-      return 'https://lain.bgm.tv$pathOnly';
-    }
-
-    if (unescaped.startsWith('/r/') || unescaped.startsWith('/pic/')) {
-      return 'https://lain.bgm.tv$unescaped';
-    }
-
-    if (unescaped.startsWith('//')) {
-      return 'https:$unescaped';
-    }
-    if (unescaped.startsWith('http://')) {
-      return unescaped.replaceFirst('http://', 'https://');
-    }
-    if (unescaped.startsWith('https://')) {
-      return unescaped;
-    }
-    if (value.startsWith('//')) {
-      return 'https:$value';
-    }
-    if (value.startsWith('/')) {
-      return 'https://bangumi.tv$value';
-    }
-    return value;
-  }
-
-  
-  String _extractImageUrlFromElement(dom.Element node) {
-    final String directSrc =
-        node.attributes['src']?.trim() ??
-        node.attributes['data-src']?.trim() ??
-        node.attributes['data-cfsrc']?.trim() ??
-        node.attributes['data-original']?.trim() ??
-        '';
-    if (directSrc.isNotEmpty) {
-      return _normalizeImageUrl(directSrc);
-    }
-
-    final String srcSet = node.attributes['srcset']?.trim() ?? '';
-    if (srcSet.isNotEmpty) {
-      final String first = srcSet
-          .split(',')
-          .first
-          .trim()
-          .split(' ')
-          .first
-          .trim();
-      if (first.isNotEmpty) {
-        return _normalizeImageUrl(first);
-      }
-    }
-
-    final String style = node.attributes['style']?.trim() ?? '';
-    if (style.isNotEmpty) {
-      final RegExpMatch? styleMatch = RegExp(
-        'background(?:-image)?\\s*:\\s*url\\((?:["\\\'])?(.*?)(?:["\\\'])?\\)',
-        caseSensitive: false,
-      ).firstMatch(style);
-      if (styleMatch != null) {
-        final String url = (styleMatch.group(1) ?? '').trim();
-        if (url.isNotEmpty) {
-          return _normalizeImageUrl(url);
-        }
-      }
-    }
-
-    return '';
-  }
-
-  
-  String _extractCoverUrlFromNode(dom.Element animeNode) {
-    final List<String> selectors = <String>[
-      'a.thumbTip',
-      'a.thumbTip img',
-      'span.image img',
-      'a.thumbTip span.image',
-      '.subjectCover img',
-      '.subjectCover',
-      'a.cover img',
-      'span.cover img',
-      'img.cover',
-      'a img',
-      'img',
-    ];
-
-    for (final String selector in selectors) {
-      final dom.Element? node = animeNode.querySelector(selector);
-      if (node == null) {
-        continue;
-      }
-
-      final String source = _extractImageUrlFromElement(node);
-      if (source.isNotEmpty) {
-        return source;
-      }
-    }
-
-    final RegExpMatch? htmlMatch = RegExp(
-      '(https?:)?//[^\\s"\\\']+/pic/cover/[^\\s"\\\']+',
-      caseSensitive: false,
-    ).firstMatch(animeNode.innerHtml);
-    if (htmlMatch != null) {
-      return _normalizeImageUrl(htmlMatch.group(0) ?? '');
-    }
-
-    final RegExpMatch? relativeMatch = RegExp(
-      '/r/\\d+/pic/cover/[^\\s"\\\']+',
-      caseSensitive: false,
-    ).firstMatch(animeNode.innerHtml);
-    if (relativeMatch != null) {
-      return _normalizeImageUrl(relativeMatch.group(0) ?? '');
-    }
-
-    return '';
-  }
-
-  Future<String> _getWithRetry(
-    String url, {
-    required String purpose,
-    Map<String, String> headers = requestHeaders,
-    bool respectRateLimit = true,
-    int retryBaseDelayMs = 800,
-  }) async {
-    Object? lastError;
-    _logNetwork('开始抓取[$purpose] ${_describeUrl(url)}');
-    if (url.startsWith(bangumiApiBaseUrl)) {
-      _logNetwork('当前 API UA: $effectiveApiUserAgent');
-    }
-    for (int i = 0; i < 3; i++) {
-      try {
-        _logNetwork('尝试 ${i + 1}/3 [$purpose] ${_describeUrl(url)}');
-        if (respectRateLimit) {
-          await _waitForRequestSlot();
-        }
-        final Uri requestUri = Uri.parse(url);
-        final http.Response response = await _runTrackedRequest(
-          () => _getWithTlsFallback(
-            requestUri,
-            headers: headers,
-            purpose: purpose,
-          ),
-        );
-        if (response.statusCode >= 200 && response.statusCode < 300) {
-          _logNetwork(
-            '抓取成功[$purpose] ${_describeUrl(url)} '
-            '(HTTP ${response.statusCode}, ${response.bodyBytes.length} bytes)',
-          );
-          return utf8.decode(response.bodyBytes);
-        }
-        if (response.statusCode == 429 ||
-            response.statusCode == 500 ||
-            response.statusCode == 502 ||
-            response.statusCode == 503 ||
-            response.statusCode == 504) {
-          _logNetwork(
-            '抓取重试[$purpose] ${_describeUrl(url)} '
-            '(HTTP ${response.statusCode})',
-          );
-          throw Exception('HTTP ${response.statusCode}');
-        }
-        _logNetwork(
-          '抓取失败[$purpose] ${_describeUrl(url)} '
-          '(HTTP ${response.statusCode})',
-        );
-        throw Exception('请求失败，状态码: ${response.statusCode}');
-      } catch (e) {
-        lastError = e;
-        _logNetwork('抓取异常[$purpose] ${_describeUrl(url)} ($e)');
-        await Future<void>.delayed(
-          Duration(milliseconds: retryBaseDelayMs * (i + 1)),
-        );
-      }
-    }
-    _logNetwork('抓取终止[$purpose] ${_describeUrl(url)} (${lastError ?? '未知错误'})');
-    throw Exception(lastError?.toString() ?? '请求失败');
-  }
-
-  Future<http.Response> fetchImageWithRetry(
-    String url, {
-    bool respectRateLimit = true,
-    String purpose = '抓取图片资源',
-  }) async {
-    Object? lastError;
-    _logNetwork('开始抓取[$purpose] ${_describeUrl(url)}');
-    for (int i = 0; i < 3; i++) {
-      try {
-        _logNetwork('尝试 ${i + 1}/3 [$purpose] ${_describeUrl(url)}');
-        if (respectRateLimit) {
-          await _waitForRequestSlot();
-        }
-        final Uri requestUri = Uri.parse(url);
-        final http.Response response = await _runTrackedRequest(
-          () => _getWithTlsFallback(
-            requestUri,
-            headers: imageRequestHeaders,
-            purpose: purpose,
-          ),
-        );
-        if (response.statusCode >= 200 && response.statusCode < 300) {
-          _logNetwork(
-            '抓取成功[$purpose] ${_describeUrl(url)} '
-            '(HTTP ${response.statusCode}, ${response.bodyBytes.length} bytes)',
-          );
-          return response;
-        }
-        if (response.statusCode == 429 ||
-            response.statusCode == 500 ||
-            response.statusCode == 502 ||
-            response.statusCode == 503 ||
-            response.statusCode == 504) {
-          _logNetwork(
-            '抓取重试[$purpose] ${_describeUrl(url)} '
-            '(HTTP ${response.statusCode})',
-          );
-          throw Exception('HTTP ${response.statusCode}');
-        }
-        _logNetwork(
-          '抓取失败[$purpose] ${_describeUrl(url)} '
-          '(HTTP ${response.statusCode})',
-        );
-        return response;
-      } catch (e) {
-        lastError = e;
-        _logNetwork('抓取异常[$purpose] ${_describeUrl(url)} ($e)');
-        await Future<void>.delayed(Duration(milliseconds: 800 * (i + 1)));
-      }
-    }
-    _logNetwork('抓取终止[$purpose] ${_describeUrl(url)} (${lastError ?? '未知错误'})');
-    throw Exception(lastError?.toString() ?? '图片请求失败');
-  }
-
-  static String _buildArchiveUrl(DateTime now) {
-    final int q = ((now.month - 1) ~/ 3) + 1;
-    return '$bgmlistArchiveBaseUrl/${now.year}q$q';
-  }
-
-  Future<List<DaySchedule>> fetchCalendarSchedule() async {
-    _subjectStartDates.clear();
-    final String url = _buildArchiveUrl(DateTime.now());
-    final String pageText = await _getWithRetry(
-      url,
-      purpose: '抓取 BGMLIST 当季番组页面',
-    );
-    return parseDailySchedule(pageText);
-  }
-
-  Future<bool> isApiAvailable({bool forceRefresh = false}) async {
-    final DateTime now = DateTime.now();
-    if (!forceRefresh &&
-        _apiAvailableCache != null &&
-        _apiAvailableCheckedAt != null &&
-        now.difference(_apiAvailableCheckedAt!) < _apiHealthCacheTtl) {
-      return _apiAvailableCache!;
-    }
-
-    try {
-      final String body = await _getWithRetry(
-        '$bangumiApiBaseUrl/v0/subjects/1',
-        purpose: '探测 Bangumi API 可用性',
-        headers: _apiRequestHeaders,
-        respectRateLimit: false,
-        retryBaseDelayMs: apiFastRetryBaseDelayMs,
-      );
-      final dynamic decoded = jsonDecode(body);
-      final bool ok = decoded is Map<String, dynamic> && decoded['id'] != null;
-      _apiAvailableCache = ok;
-      _apiAvailableCheckedAt = now;
-      return ok;
-    } catch (_) {
-      _apiAvailableCache = false;
-      _apiAvailableCheckedAt = now;
-      return false;
-    }
-  }
-
-  Future<String> fetchBgmListOnAirJson() async {
-    return _getWithRetry(bgmListOnAirApiUrl, purpose: '抓取 BGMLIST 全部番组 JSON');
-  }
-
-  /// Check whether a subject is still airing (aired episodes < total).
-  Future<bool> isSubjectStillAiring(String subjectId) async {
-    if (subjectId.isEmpty) return false;
-
-    // Total episodes from subject endpoint.
-    final Map<String, dynamic>? subject = await _fetchSubjectFromApi(subjectId);
-    if (subject == null || subject.isEmpty) return false;
-    final int? totalEps =
-        _readInt(subject['total_episodes']) ?? _readInt(subject['eps']);
-    if (totalEps == null || totalEps <= 0) return false;
-
-    // Aired count from episodes list.
-    final List<Map<String, dynamic>> episodes =
-        await _fetchMainEpisodesFromApi(subjectId);
-    if (episodes.isEmpty) return false;
-
-    final DateTime todayStartJst = DateTime.now()
-        .toUtc()
-        .add(const Duration(hours: 9));
-    final DateTime jstDayStart =
-        DateTime.utc(todayStartJst.year, todayStartJst.month, todayStartJst.day);
-
-    int aired = 0;
-    for (final Map<String, dynamic> ep in episodes) {
-      final int epNo =
-          (_readDouble(ep['ep']) ?? _readDouble(ep['sort']) ?? 0).round();
-      if (epNo <= 0) continue;
-      final String airdateText = _readString(ep['airdate']);
-      if (airdateText.isEmpty) continue;
-      final DateTime? airdate = _readDate(airdateText);
-      if (airdate != null && !airdate.isAfter(jstDayStart)) {
-        aired += 1;
-      }
-    }
-
-    return aired < totalEps;
-  }
-
-  DateTime? _toJstDateTimeFromIso(String isoText) {
-    if (isoText.isEmpty) {
-      return null;
-    }
-    try {
-      final DateTime utc = DateTime.parse(isoText).toUtc();
-      return utc.add(const Duration(hours: 9));
-    } catch (_) {
-      return null;
-    }
-  }
-
-  
-  String _toJstTimeFromIso(String isoText) {
-    final DateTime? jst = _toJstDateTimeFromIso(isoText);
-    if (jst == null) {
-      return '';
-    }
-    final String hh = jst.hour.toString().padLeft(2, '0');
-    final String mm = jst.minute.toString().padLeft(2, '0');
-    return '$hh:$mm';
-  }
-
-  
-  String _extractJstTimeFromBgmListItem(Map<String, dynamic> item) {
-    final String broadcast = (item['broadcast'] as String? ?? '').trim();
-    if (broadcast.isNotEmpty) {
-      final RegExpMatch? match = RegExp(r'^R/([^/]+)/').firstMatch(broadcast);
-      final String fromBroadcast = _toJstTimeFromIso(
-        (match?.group(1) ?? '').trim(),
-      );
-      if (fromBroadcast.isNotEmpty) {
-        return fromBroadcast;
-      }
-    }
-
-    final String begin = (item['begin'] as String? ?? '').trim();
-    return _toJstTimeFromIso(begin);
-  }
-
-  
-  Iterable<String> _extractJpTitlesFromBgmListItem(Map<String, dynamic> item) {
-    final Set<String> titles = <String>{};
-
-    final String mainTitle = (item['title'] as String? ?? '').trim();
-    if (mainTitle.isNotEmpty) {
-      titles.add(mainTitle);
-    }
-
-    final dynamic titleTranslate = item['titleTranslate'];
-    if (titleTranslate is Map) {
-      final dynamic ja = titleTranslate['ja'];
-      if (ja is List) {
-        for (final dynamic raw in ja) {
-          final String value = raw?.toString().trim() ?? '';
-          if (value.isNotEmpty) {
-            titles.add(value);
-          }
-        }
-      }
-    }
-
-    return titles.toList(growable: false);
-  }
-
-  
-  List<BgmListOnAirEntry> parseBgmListOnAirEntries(String jsonText) {
-    if (jsonText.trim().isEmpty) {
-      return <BgmListOnAirEntry>[];
-    }
-
-    try {
-      final dynamic decoded = jsonDecode(jsonText);
-      if (decoded is! Map<String, dynamic>) {
-        return <BgmListOnAirEntry>[];
-      }
-
-      final dynamic itemsRaw = decoded['items'];
-      if (itemsRaw is! List) {
-        return <BgmListOnAirEntry>[];
-      }
-
-      final List<BgmListOnAirEntry> entries = <BgmListOnAirEntry>[];
-      for (final dynamic raw in itemsRaw) {
-        if (raw is! Map<String, dynamic>) {
-          continue;
-        }
-
-        final String timeText = _extractJstTimeFromBgmListItem(raw);
-        if (timeText.isEmpty) {
-          continue;
-        }
-
-        final List<String> jpTitles = _extractJpTitlesFromBgmListItem(
-          raw,
-        ).where((String title) => title.trim().isNotEmpty).toList();
-        if (jpTitles.isEmpty) {
-          continue;
-        }
-
-        entries.add(BgmListOnAirEntry(timeJst: timeText, jpTitles: jpTitles));
-      }
-
-      return entries;
-    } catch (_) {
-      return <BgmListOnAirEntry>[];
-    }
-  }
-
-  String _extractBangumiIdFromBgmListItem(Map<String, dynamic> item) {
-    final dynamic sitesRaw = item['sites'];
-    if (sitesRaw is! List) {
-      return '';
-    }
-
-    for (final dynamic siteRaw in sitesRaw) {
-      if (siteRaw is! Map<String, dynamic>) {
-        continue;
-      }
-      final String site = _readString(siteRaw['site']).toLowerCase();
-      if (site == 'bangumi' || site == 'bangumi.tv') {
-        final String id = _readString(siteRaw['id']);
-        if (RegExp(r'^\d+$').hasMatch(id)) {
-          return id;
-        }
-      }
-    }
-
-    return '';
-  }
-
-  String _extractCnTitleFromBgmListItem(Map<String, dynamic> item) {
-    final dynamic titleTranslate = item['titleTranslate'];
-    if (titleTranslate is! Map) {
-      return '';
-    }
-
-    for (final String key in <String>['zh-Hans', 'zh-Hant', 'zh']) {
-      final dynamic raw = titleTranslate[key];
-      if (raw is List) {
-        for (final dynamic one in raw) {
-          final String text = one?.toString().trim() ?? '';
-          if (text.isNotEmpty) {
-            return text;
-          }
-        }
-      }
-    }
-
-    return '';
-  }
-
-  String _extractCoverUrlFromBgmListItem(Map<String, dynamic> item) {
-    final dynamic imagesRaw = item['images'];
-    if (imagesRaw is! Map<String, dynamic>) {
-      return '';
-    }
-
-    for (final String key in <String>[
-      'common',
-      'large',
-      'medium',
-      'small',
-      'grid',
-    ]) {
-      final String url = _normalizeImageUrl(_readString(imagesRaw[key]));
-      if (url.isNotEmpty) {
-        return url;
-      }
-    }
-
-    return '';
-  }
-
-  DateTime? _extractBroadcastStartJstFromBgmListItem(Map<String, dynamic> item) {
-    final String broadcast = _readString(item['broadcast']);
-    if (broadcast.isNotEmpty) {
-      final RegExpMatch? match = RegExp(r'^R/([^/]+)/').firstMatch(broadcast);
-      final DateTime? start = _toJstDateTimeFromIso(
-        (match?.group(1) ?? '').trim(),
-      );
-      if (start != null) {
-        return start;
-      }
-    }
-    return null;
-  }
-
-  DateTime? _extractBeginJstFromBgmListItem(Map<String, dynamic> item) {
-    final String begin = _readString(item['begin']);
-    if (begin.isNotEmpty) {
-      final DateTime? beginJst = _toJstDateTimeFromIso(begin);
-      if (beginJst != null) {
-        return beginJst;
-      }
-    }
-    return _extractBroadcastStartJstFromBgmListItem(item);
-  }
-
-  int? _extractBroadcastPeriodDaysFromBgmListItem(Map<String, dynamic> item) {
-    final String broadcast = _readString(item['broadcast']);
-    if (broadcast.isEmpty) {
-      return null;
-    }
-
-    final RegExpMatch? match = RegExp(r'^R/[^/]+/P(\d+)([DWM])$').firstMatch(
-      broadcast,
-    );
-    if (match == null) {
-      return null;
-    }
-
-    final int? amount = int.tryParse(match.group(1) ?? '');
-    final String unit = match.group(2) ?? '';
-    if (amount == null || amount <= 0) {
-      return null;
-    }
-
-    if (unit == 'D') {
-      return amount;
-    }
-    if (unit == 'W') {
-      return amount * 7;
-    }
-
-    return null;
-  }
-
-  List<BgmListScheduleCandidate> parseBgmListScheduleCandidates(String jsonText) {
-    if (jsonText.trim().isEmpty) {
-      return <BgmListScheduleCandidate>[];
-    }
-
-    try {
-      final dynamic decoded = jsonDecode(jsonText);
-      if (decoded is! Map<String, dynamic>) {
-        return <BgmListScheduleCandidate>[];
-      }
-
-      final dynamic itemsRaw = decoded['items'];
-      if (itemsRaw is! List) {
-        return <BgmListScheduleCandidate>[];
-      }
-
-      final List<BgmListScheduleCandidate> result = <BgmListScheduleCandidate>[];
-      for (final dynamic raw in itemsRaw) {
-        if (raw is! Map<String, dynamic>) {
-          continue;
-        }
-
-        final String subjectId = _extractBangumiIdFromBgmListItem(raw);
-        if (subjectId.isEmpty) {
-          continue;
-        }
-
-        final String titleJp = _readString(raw['title']);
-        if (titleJp.isEmpty) {
-          continue;
-        }
-
-        final DateTime? beginJst = _extractBeginJstFromBgmListItem(raw);
-        if (beginJst == null) {
-          continue;
-        }
-
-        final DateTime? broadcastStartJst =
-            _extractBroadcastStartJstFromBgmListItem(raw);
-        final DateTime weekdaySource = broadcastStartJst ?? beginJst;
-        final String weekdayJst = weekdayMap[weekdaySource.weekday] ?? '';
-        if (weekdayJst.isEmpty) {
-          continue;
-        }
-
-        final String updateTimeJst = _extractJstTimeFromBgmListItem(raw);
-        if (updateTimeJst.isEmpty) {
-          continue;
-        }
-
-        final int? periodDays = _extractBroadcastPeriodDaysFromBgmListItem(raw);
-        if (periodDays == null || periodDays <= 0) {
-          continue;
-        }
-
-        result.add(
-          BgmListScheduleCandidate(
-            subjectId: subjectId,
-            subjectUrl: 'https://bangumi.tv/subject/$subjectId',
-            titleJp: titleJp,
-            titleCn: _extractCnTitleFromBgmListItem(raw),
-            coverUrl: _extractCoverUrlFromBgmListItem(raw),
-            weekdayJst: weekdayJst,
-            updateTimeJst: updateTimeJst,
-            beginJst: beginJst,
-            periodDays: periodDays,
-          ),
-        );
-      }
-
-      return result;
-    } catch (_) {
-      return <BgmListScheduleCandidate>[];
-    }
-  }
-
-  
-  String _extractSubjectId(String input) {
-    final String trimmed = input.trim();
-    if (trimmed.isEmpty) {
-      return '';
-    }
-
-    final RegExp pureNumber = RegExp(r'^\d+$');
-    if (pureNumber.hasMatch(trimmed)) {
-      return trimmed;
-    }
-
-    final RegExp pathPattern = RegExp(r'/subject/(\d+)');
-    final RegExpMatch? pathMatch = pathPattern.firstMatch(trimmed);
-    if (pathMatch != null) {
-      return pathMatch.group(1) ?? '';
-    }
-
-    final Uri? uri = Uri.tryParse(trimmed);
-    if (uri != null) {
-      final RegExpMatch? uriMatch = pathPattern.firstMatch(uri.path);
-      if (uriMatch != null) {
-        return uriMatch.group(1) ?? '';
-      }
-    }
-
-    return '';
-  }
-
-  
-  String _readString(dynamic value) {
-    if (value == null) {
-      return '';
-    }
-    final String text = value.toString().trim();
-    return text == 'null' ? '' : text;
-  }
-
-  
-  int? _readInt(dynamic value) {
-    if (value == null) {
-      return null;
-    }
-    if (value is int) {
-      return value;
-    }
-    if (value is double) {
-      return value.toInt();
-    }
-    return int.tryParse(value.toString().trim());
-  }
-
-  
-  double? _readDouble(dynamic value) {
-    if (value == null) {
-      return null;
-    }
-    if (value is num) {
-      return value.toDouble();
-    }
-    return double.tryParse(value.toString().trim());
-  }
-
-  
-  DateTime? _readDate(String rawDate) {
-    final String value = rawDate.trim();
-    if (value.isEmpty) {
-      return null;
-    }
-    try {
-      return DateTime.parse(value);
-    } catch (_) {
-      return null;
-    }
-  }
-
-  
-  String _pickBestImageUrlFromSubjectApi(Map<String, dynamic> subjectJson) {
-    final dynamic imagesRaw = subjectJson['images'];
-    if (imagesRaw is! Map<String, dynamic>) {
-      return '';
-    }
-
-    for (final String key in <String>[
-      'common',
-      'large',
-      'medium',
-      'small',
-      'grid',
-    ]) {
-      final String url = _normalizeImageUrl(_readString(imagesRaw[key]));
-      if (url.isNotEmpty) {
-        return url;
-      }
-    }
-    return '';
-  }
-
-  Future<Map<String, dynamic>?> _fetchSubjectFromApi(String subjectId) async {
-    if (subjectId.isEmpty) {
-      return null;
-    }
-
-    final String body = await _getWithRetry(
-      '$bangumiApiBaseUrl/v0/subjects/$subjectId',
-      purpose: '抓取 Bangumi API 条目信息',
-      headers: _apiRequestHeaders,
-      respectRateLimit: false,
-      retryBaseDelayMs: apiFastRetryBaseDelayMs,
-    );
-
-    final dynamic decoded = jsonDecode(body);
-    if (decoded is Map<String, dynamic>) {
-      return decoded;
-    }
-    return null;
-  }
-
-  Future<int?> fetchSubjectTotalEpisodes(String subjectId) async {
-    final Map<String, dynamic>? subject = await _fetchSubjectFromApi(subjectId);
-    if (subject == null || subject.isEmpty) {
-      return null;
-    }
-
-    final int? total = _readInt(subject['total_episodes']) ?? _readInt(subject['eps']);
-    if (total == null || total <= 0) {
-      return null;
-    }
-    return total;
-  }
-
-  Future<List<Map<String, dynamic>>> _fetchMainEpisodesFromApi(
-    String subjectId,
-  ) async {
-    if (subjectId.isEmpty) {
-      return <Map<String, dynamic>>[];
-    }
-
-    final String body = await _getWithRetry(
-      '$bangumiApiBaseUrl/v0/episodes?subject_id=$subjectId&type=0&limit=200&offset=0',
-      purpose: '抓取 Bangumi API 分集列表',
-      headers: _apiRequestHeaders,
-      respectRateLimit: false,
-      retryBaseDelayMs: apiFastRetryBaseDelayMs,
-    );
-
-    final dynamic decoded = jsonDecode(body);
-    if (decoded is! Map<String, dynamic>) {
-      return <Map<String, dynamic>>[];
-    }
-    final dynamic data = decoded['data'];
-    if (data is! List) {
-      return <Map<String, dynamic>>[];
-    }
-
-    return data.whereType<Map<String, dynamic>>().toList();
-  }
-
-  Future<SubjectProgress?> _tryFetchSubjectProgressViaApi(
-    String targetUrl, {
-    String scheduleTime = '',
-    String scheduleWeekday = '',
-    int displayTimezoneOffsetMinutes = BroadcastTimeConverter.jstOffsetMinutes,
-  }
-  ) async {
-    final String subjectId = _extractSubjectId(targetUrl);
-    if (subjectId.isEmpty) {
-      return null;
-    }
-
-    Map<String, dynamic>? subject;
-    List<Map<String, dynamic>> episodes = <Map<String, dynamic>>[];
-
-    await Future.wait<void>(<Future<void>>[
-      (() async {
-        subject = await _fetchSubjectFromApi(subjectId);
-      })(),
-      (() async {
-        episodes = await _fetchMainEpisodesFromApi(subjectId);
-      })(),
-    ]);
-
-    if (subject == null || subject!.isEmpty) {
-      return null;
-    }
-    if (episodes.isEmpty) {
-      return null;
-    }
-    final Map<String, dynamic> subjectData = subject!;
-
-    final List<Map<String, dynamic>>
-    sorted = List<Map<String, dynamic>>.from(episodes)
-      ..sort((Map<String, dynamic> a, Map<String, dynamic> b) {
-        final double aNo = _readDouble(a['ep']) ?? _readDouble(a['sort']) ?? 0;
-        final double bNo = _readDouble(b['ep']) ?? _readDouble(b['sort']) ?? 0;
-        return aNo.compareTo(bNo);
-      });
-
-    final int normalizedDisplayOffset =
-      BroadcastTimeConverter.normalizeTimezoneOffsetMinutes(
-        displayTimezoneOffsetMinutes,
-      );
-    final DateTime nowInDisplay =
-      DateTime.now().toUtc().add(Duration(minutes: normalizedDisplayOffset));
-    final DateTime todayStartInDisplay = DateTime.utc(
-      nowInDisplay.year,
-      nowInDisplay.month,
-      nowInDisplay.day,
-    );
-
-    int airedCount = 0;
-    int? latestAiredEp;
-    String? latestAiredDisplayTitle;
-    DateTime? latestAiredAtInDisplay;
-    int? nextEp;
-    final List<int> episodeCommentCounts = <int>[];
-    final Map<int, String> episodeTitleByEp = <int, String>{};
-
-    for (final Map<String, dynamic> ep in sorted) {
-      final int epNo = (_readDouble(ep['ep']) ?? _readDouble(ep['sort']) ?? 0)
-          .round();
-      final String airdateText = _readString(ep['airdate']);
-      final DateTime? airdate = _readDate(airdateText);
-      final int commentCount = _readInt(ep['comment']) ?? 0;
-      episodeCommentCounts.add(math.max(commentCount, 0));
-
-      DateTime? airedAtInDisplay;
-      bool isAired;
-      if (airdate == null) {
-        isAired = false;
-      } else if (scheduleTime.trim().isNotEmpty) {
-        airedAtInDisplay = BroadcastTimeConverter.resolveEpisodeBroadcastInDisplayTime(
-          airdateJst: DateTime(airdate.year, airdate.month, airdate.day),
-          displayTime: scheduleTime,
-          displayOffsetMinutes: normalizedDisplayOffset,
-          displayWeekday: scheduleWeekday,
-        );
-
-        if (airedAtInDisplay != null) {
-          isAired = !airedAtInDisplay.isAfter(nowInDisplay);
-        } else {
-          isAired = !DateTime.utc(
-            airdate.year,
-            airdate.month,
-            airdate.day,
-          ).isAfter(todayStartInDisplay);
-        }
-      } else {
-        isAired = !DateTime.utc(
-          airdate.year,
-          airdate.month,
-          airdate.day,
-        ).isAfter(todayStartInDisplay);
-      }
-
-      final String cn = _readString(ep['name_cn']);
-      final String origin = _readString(ep['name']);
-      final String display = cn.isNotEmpty ? cn : origin;
-      if (epNo > 0 && display.isNotEmpty) {
-        episodeTitleByEp[epNo] = display;
-      }
-
-      if (isAired) {
-        airedCount += 1;
-        if (epNo > 0) {
-          latestAiredEp = epNo;
-          latestAiredAtInDisplay = airedAtInDisplay;
-        }
-
-        if (display.isNotEmpty) {
-          latestAiredDisplayTitle = display;
-        }
-      } else if (nextEp == null && epNo > 0) {
-        nextEp = epNo;
-      }
-    }
-
-    final int totalEpsListed = sorted.length;
-    final Map<String, dynamic>? ratingData =
-        subjectData['rating'] as Map<String, dynamic>?;
-    final double? ratingScore = _readDouble(ratingData?['score']);
-    final int? totalEpsDeclared =
-        _readInt(subjectData['total_episodes']) ?? _readInt(subjectData['eps']);
-    final int? totalEps =
-        totalEpsDeclared ?? (totalEpsListed > 0 ? totalEpsListed : null);
-
-    final String progressText = totalEps == null
-        ? '未知'
-        : '$airedCount/$totalEps';
-
-    String? latestAiredAtLabel;
-    if (latestAiredAtInDisplay != null) {
-      final String weekday =
-          weekdayMap[latestAiredAtInDisplay.weekday] ?? '';
-      final String hh = latestAiredAtInDisplay.hour.toString().padLeft(2, '0');
-      final String mm = latestAiredAtInDisplay.minute.toString().padLeft(2, '0');
-      latestAiredAtLabel =
-          '$weekday $hh:$mm ${BroadcastTimeConverter.formatUtcOffsetLabel(normalizedDisplayOffset)}';
-    }
-
-    return SubjectProgress(
-      totalEpsDeclared: totalEpsDeclared,
-      totalEpsListed: totalEpsListed,
-      airedEps: airedCount,
-      latestAiredEp: latestAiredEp,
-      latestAiredCnTitle: latestAiredDisplayTitle,
-      latestAiredAtLabel: latestAiredAtLabel,
-      nextEp: nextEp,
-      ratingScore: ratingScore,
-      episodeCommentCounts: List<int>.unmodifiable(episodeCommentCounts),
-      episodeTitleByEp: Map<int, String>.unmodifiable(episodeTitleByEp),
-      progressText: progressText,
-    );
-  }
-
-  Future<SubjectProgress> fetchSubjectProgress(
-    String targetUrl, {
-    String scheduleTime = '',
-    String scheduleWeekday = '',
-    int displayTimezoneOffsetMinutes = BroadcastTimeConverter.jstOffsetMinutes,
-  }) async {
-    final SubjectProgress? apiProgress = await _tryFetchSubjectProgressViaApi(
-      targetUrl,
-      scheduleTime: scheduleTime,
-      scheduleWeekday: scheduleWeekday,
-      displayTimezoneOffsetMinutes: displayTimezoneOffsetMinutes,
-    );
-    if (apiProgress != null) {
-      return apiProgress;
-    }
-    throw Exception('Bangumi API 未返回有效进度数据');
-  }
-
-  Future<String> fetchSubjectCoverUrl(String subjectUrl) async {
-    if (subjectUrl.isEmpty) {
-      return '';
-    }
-
-    final String subjectId = _extractSubjectId(subjectUrl);
-    if (subjectId.isEmpty) {
-      return '';
-    }
-
-    final Map<String, dynamic>? subject = await _fetchSubjectFromApi(subjectId);
-    if (subject == null) {
-      return '';
-    }
-    return _pickBestImageUrlFromSubjectApi(subject);
-  }
-
-  
-  /// Map BGMLIST Chinese weekday chars to the standard Bangumi weekday name.
-  static String _standardizeWeekday(String chineseDay) {
-    switch (chineseDay) {
-      case '日':  return '星期日';
-      case '一':  return '星期一';
-      case '二':  return '星期二';
-      case '三':  return '星期三';
-      case '四':  return '星期四';
-      case '五':  return '星期五';
-      case '六':  return '星期六';
-      default:    return '';
-    }
-  }
-
-  List<DaySchedule> parseDailySchedule(String pageText) {
-    final dom.Document document = html_parser.parse(pageText);
-
-    final Map<String, List<SubjectItem>> dayGroups = <String, List<SubjectItem>>{
-      for (final String d in <String>[
-        '星期日', '星期一', '星期二', '星期三', '星期四', '星期五', '星期六',
-      ])
-        d: <SubjectItem>[],
-    };
-
-    for (final dom.Element article in document.querySelectorAll('article')) {
-      // CN title
-      final dom.Element? h3 = article.querySelector('h3');
-      final String cnName = h3?.text.trim() ?? '';
-      if (cnName.isEmpty) continue;
-
-      // JP subtitle
-      final String originName =
-          article.querySelector('[class^="BangumiItem_subTitle"]')?.text
-                  .trim() ??
-              '';
-
-      // Broadcast day and time: "每周X HH:MM"
-      final String fullText = article.text;
-      final RegExpMatch? timeMatch = RegExp(
-        r'每周([日月一二三四五六七八九十]+)\s*(\d{2}:\d{2})',
-      ).firstMatch(fullText);
-      if (timeMatch == null) continue;
-      final String weekday = _standardizeWeekday(timeMatch.group(1)!);
-      final String updateTime = timeMatch.group(2)!;
-      if (weekday.isEmpty) continue;
-
-      // Bangumi ID from the 「番组计划」 link
-      final dom.Element? bgmLink = article.querySelector(
-        'a[href*="bangumi.tv/subject/"]',
-      );
-      if (bgmLink == null) continue;
-      final String href = bgmLink.attributes['href'] ?? '';
-      final RegExpMatch? idMatch = RegExp(r'/subject/(\d+)').firstMatch(href);
-      final String subjectId = idMatch?.group(1) ?? '';
-      if (subjectId.isEmpty) continue;
-
-      // Broadcast start date (JST, from the archive page)
-      final RegExpMatch? startMatch = RegExp(
-        r'(\d{4}-\d{2}-\d{2})\s*起',
-      ).firstMatch(fullText);
-      if (startMatch != null) {
-        final DateTime? parsed = DateTime.tryParse(startMatch.group(1)!);
-        if (parsed != null) {
-          _subjectStartDates[subjectId] = parsed;
-        }
-      }
-
-      dayGroups[weekday]!.add(SubjectItem(
-        subjectId: subjectId,
-        subjectUrl: href,
-        nameCn: cnName,
-        nameOrigin: originName,
-        coverUrl: '',
-        updateTime: updateTime,
-      ));
-    }
-
-    final List<DaySchedule> schedules = <DaySchedule>[];
-    for (final String wd in <String>[
-      '星期日', '星期一', '星期二', '星期三', '星期四', '星期五', '星期六',
-    ]) {
-      if (dayGroups[wd]!.isNotEmpty) {
-        dayGroups[wd]!.sort(
-          (SubjectItem a, SubjectItem b) =>
-              a.updateTime.compareTo(b.updateTime),
-        );
-        schedules.add(DaySchedule(weekday: wd, items: dayGroups[wd]!));
-      }
-    }
-    return schedules;
-  }
-
-  
-  SubjectBasicInfo parseSubjectBasicInfo(String subjectPageText) {
-    final dom.Document document = html_parser.parse(subjectPageText);
-    int? totalEpsDeclared;
-    String airStart = '';
-    String airWeekday = '';
-
-    for (final dom.Element li in document.querySelectorAll('#infobox li')) {
-      final String text = li.text.replaceAll('\n', ' ').trim();
-      if (text.startsWith('话数:') || text.startsWith('话数：')) {
-        final RegExpMatch? match = RegExp(r'(\d+)').firstMatch(text);
-        if (match != null) {
-          totalEpsDeclared = int.tryParse(match.group(1)!);
-        }
-      } else if (text.startsWith('放送开始:') || text.startsWith('放送开始：')) {
-        final List<String> parts = text.split(RegExp(r'[:：]'));
-        if (parts.length > 1) {
-          airStart = parts.sublist(1).join(':').trim();
-        }
-      } else if (text.startsWith('放送星期:') || text.startsWith('放送星期：')) {
-        final List<String> parts = text.split(RegExp(r'[:：]'));
-        if (parts.length > 1) {
-          airWeekday = parts.sublist(1).join(':').trim();
-        }
-      }
-    }
-
-    return SubjectBasicInfo(
-      totalEpsDeclared: totalEpsDeclared,
-      airStart: airStart,
-      airWeekday: airWeekday,
-    );
-  }
-
-  
-  Map<String, int> parseSubjectDiscussionCountByEpId(String subjectPageText) {
-    final dom.Document document = html_parser.parse(subjectPageText);
-    final Map<String, int> result = <String, int>{};
-
-    for (final dom.Element discussLink in document.querySelectorAll(
-      'a[href^="/subject/ep/"]',
-    )) {
-      final String href = discussLink.attributes['href']?.trim() ?? '';
-      final RegExpMatch? epMatch = RegExp(
-        r'^/subject/ep/(\d+)',
-      ).firstMatch(href);
-      if (epMatch == null) {
-        continue;
-      }
-      final String epId = epMatch.group(1) ?? '';
-      if (epId.isEmpty) {
-        continue;
-      }
-
-      final dom.Element? countNode =
-          discussLink.parent?.querySelector('small.na') ??
-          discussLink.parent?.parent?.querySelector('small.na') ??
-          discussLink.nextElementSibling;
-      final String countText = countNode?.text.trim() ?? '';
-      final RegExpMatch? countMatch = RegExp(r'\+?(\d+)').firstMatch(countText);
-      final int? count = countMatch != null
-          ? int.tryParse(countMatch.group(1) ?? '')
-          : null;
-      if (count == null) {
-        continue;
-      }
-
-      result[epId] = count;
-    }
-
-    return result;
-  }
-
-  
-  Map<String, String> parseSubjectCnTitleByEpId(String subjectPageText) {
-    final dom.Document document = html_parser.parse(subjectPageText);
-    final Map<String, String> result = <String, String>{};
-
-    for (final dom.Element popup in document.querySelectorAll(
-      'div.prg_popup[id^="prginfo_"]',
-    )) {
-      final String idAttr = popup.id.trim();
-      final RegExpMatch? idMatch = RegExp(
-        r'^prginfo_(\d+)$',
-      ).firstMatch(idAttr);
-      if (idMatch == null) {
-        continue;
-      }
-      final String epId = idMatch.group(1) ?? '';
-      if (epId.isEmpty) {
-        continue;
-      }
-
-      final dom.Element? tipNode = popup.querySelector('span.tip');
-      if (tipNode == null) {
-        continue;
-      }
-
-      final String html = tipNode.innerHtml;
-      final RegExpMatch? cnMatch = RegExp(
-        r'中文标题\s*[:：]\s*([^<\r\n]+)',
-        caseSensitive: false,
-      ).firstMatch(html);
-      if (cnMatch == null) {
-        continue;
-      }
-
-      final String title = (cnMatch.group(1) ?? '').trim();
-      if (title.isNotEmpty && !result.containsKey(epId)) {
-        result[epId] = title;
-      }
-    }
-
-    return result;
-  }
-
-  EpisodeProgress parseEpisodeProgress(
-    String epPageText, {
-    Map<String, int>? discussionByEpId,
-  }) {
-    final dom.Document document = html_parser.parse(epPageText);
-    final List<dom.Element> rows = document.querySelectorAll(
-      'li.line_odd, li.line_even',
-    );
-
-    int totalNumericEps = 0;
-    int airedNumericEps = 0;
-    int? latestAiredEp;
-    String? latestAiredEpId;
-    String? latestAiredOriginTitle;
-    int? nextUnairedEp;
-    final List<int> numericEpisodesInOrder = <int>[];
-    final List<String> episodeIdsInOrder = <String>[];
-    final List<String> episodeOriginTitlesInOrder = <String>[];
-
-    for (final dom.Element row in rows) {
-      final dom.Element? link = row.querySelector('h6 a[href^="/ep/"]');
-      if (link == null) {
-        continue;
-      }
-
-      final String linkText = link.text.trim();
-      final RegExpMatch? match = RegExp(r'^(\d+)\.').firstMatch(linkText);
-      if (match == null) {
-        continue;
-      }
-
-      final RegExpMatch? titleMatch = RegExp(
-        r'^\d+\.\s*(.+)$',
-      ).firstMatch(linkText);
-      final String originTitle = (titleMatch?.group(1) ?? '').trim();
-
-      final int? epNo = int.tryParse(match.group(1)!);
-      if (epNo == null) {
-        continue;
-      }
-
-      final String epHref = link.attributes['href']?.trim() ?? '';
-      final RegExpMatch? epIdMatch = RegExp(r'^/ep/(\d+)').firstMatch(epHref);
-      final String epId = epIdMatch?.group(1) ?? '';
-
-      totalNumericEps += 1;
-      numericEpisodesInOrder.add(epNo);
-      episodeIdsInOrder.add(epId);
-      episodeOriginTitlesInOrder.add(originTitle);
-
-      final dom.Element? statusNode = row.querySelector(
-        'span.epAirStatus span',
-      );
-      final String classes = statusNode?.className ?? '';
-      final bool isAired = classes.split(' ').contains('Air');
-
-      if (isAired) {
-        airedNumericEps += 1;
-        if (latestAiredEp == null || epNo > latestAiredEp) {
-          latestAiredEp = epNo;
-          latestAiredEpId = epId.isEmpty ? latestAiredEpId : epId;
-          latestAiredOriginTitle = originTitle.isEmpty
-              ? latestAiredOriginTitle
-              : originTitle;
-        }
-      }
-    }
-
-    for (final int epNo in numericEpisodesInOrder) {
-      if (latestAiredEp == null || epNo > latestAiredEp) {
-        nextUnairedEp = epNo;
-        break;
-      }
-    }
-
-    return EpisodeProgress(
-      totalEpsListed: totalNumericEps,
-      airedEps: airedNumericEps,
-      latestAiredEp: latestAiredEp,
-      latestAiredEpId: latestAiredEpId,
-      latestAiredOriginTitle: latestAiredOriginTitle,
-      nextEp: nextUnairedEp,
-    );
-  }
-}
-
-/// BangumiHomePage：组件或数据结构定义。
+/// BangumiHomePage
 class BangumiHomePage extends StatefulWidget {
   const BangumiHomePage({
     super.key,
@@ -2606,7 +275,7 @@ class BangumiHomePage extends StatefulWidget {
   State<BangumiHomePage> createState() => _BangumiHomePageState();
 }
 
-/// _BangumiHomePageState：组件或数据结构定义。
+/// _BangumiHomePageState
 class _BangumiHomePageState extends State<BangumiHomePage>
   with WidgetsBindingObserver {
   static const String _appBarLogoAsset = 'assets/images/logoWHT.svg';
@@ -2659,9 +328,6 @@ class _BangumiHomePageState extends State<BangumiHomePage>
   bool _showNetworkIndicator = false;
   Timer? _networkIndicatorHideTimer;
   List<BgmListOnAirEntry> _bgmOnAirEntries = <BgmListOnAirEntry>[];
-  List<BgmListScheduleCandidate> _bgmScheduleCandidates =
-      <BgmListScheduleCandidate>[];
-  final Map<String, int?> _subjectTotalEpisodesCache = <String, int?>{};
   String _scheduleError = '';
   final List<String> _debugLogs = <String>[];
   int _lastLoggedActiveRequests = -1;
@@ -2700,8 +366,14 @@ class _BangumiHomePageState extends State<BangumiHomePage>
     final Map<String, int> _legacyAbsoluteProgressCorrections =
       <String, int>{};
     bool _progressCorrectionMigrationDirty = false;
+    final Map<String, String> _searchCoverPaths = <String, String>{};
   Map<String, int> _manualProgressCorrections = <String, int>{};
   Set<String> _selectedIds = <String>{};
+  List<SearchSubjectResult> _allSearchResults = <SearchSubjectResult>[];
+  int _searchTotalResults = 0;
+  int _currentSearchPage = 0;
+  bool _isSearching = false;
+  String _searchError = '';
   int? _debugWeekdayOverride;
 
   String get _systemWeekday {
@@ -3193,69 +865,36 @@ class _BangumiHomePageState extends State<BangumiHomePage>
     _progressCorrectionMigrationDirty = true;
   }
 
-  SubjectProgress _applyAbsoluteCorrection(
+  SubjectProgress _applyCorrection(
     SubjectProgress progress,
-    int absoluteEp,
+    int corrected,
   ) {
     final int? totalEps = progress.totalEpsDeclared ?? progress.totalEpsListed;
-    final int corrected = _clampCorrectedEp(absoluteEp, totalEps);
-    final int? nextEp = totalEps != null && corrected < totalEps
-        ? corrected + 1
+    final int clamped = _clampCorrectedEp(corrected, totalEps);
+    final int? nextEp = totalEps != null && clamped < totalEps
+        ? clamped + 1
         : null;
     final int theoretical = _resolveTheoreticalAiredEp(progress);
-    final String? correctedEpTitle = corrected <= 0
+    final String? correctedEpTitle = clamped <= 0
         ? null
-        : (progress.episodeTitleByEp[corrected]?.trim().isNotEmpty ?? false)
-        ? progress.episodeTitleByEp[corrected]
-        : (theoretical == corrected ? progress.latestAiredCnTitle : null);
+        : (progress.episodeTitleByEp[clamped]?.trim().isNotEmpty ?? false)
+        ? progress.episodeTitleByEp[clamped]
+        : (theoretical == clamped ? progress.latestAiredCnTitle : null);
 
     return SubjectProgress(
       totalEpsDeclared: progress.totalEpsDeclared,
       totalEpsListed: progress.totalEpsListed,
-      airedEps: corrected,
-      latestAiredEp: corrected > 0 ? corrected : null,
+      airedEps: clamped,
+      latestAiredEp: clamped > 0 ? clamped : null,
       latestAiredCnTitle: correctedEpTitle,
-      latestAiredAtLabel: theoretical == corrected
+      latestAiredAtLabel: theoretical == clamped
           ? progress.latestAiredAtLabel
           : null,
       nextEp: nextEp,
       ratingScore: progress.ratingScore,
       episodeCommentCounts: progress.episodeCommentCounts,
       episodeTitleByEp: progress.episodeTitleByEp,
-      progressText: totalEps == null ? '$corrected/未知' : '$corrected/$totalEps',
-    );
-  }
-
-  SubjectProgress _applyDeltaCorrection(
-    SubjectProgress progress,
-    int delta,
-  ) {
-    final int? totalEps = progress.totalEpsDeclared ?? progress.totalEpsListed;
-    final int theoretical = _resolveTheoreticalAiredEp(progress);
-    final int corrected = _clampCorrectedEp(theoretical + delta, totalEps);
-    final int? nextEp = totalEps != null && corrected < totalEps
-        ? corrected + 1
-        : null;
-    final String? correctedEpTitle = corrected <= 0
-        ? null
-        : (progress.episodeTitleByEp[corrected]?.trim().isNotEmpty ?? false)
-        ? progress.episodeTitleByEp[corrected]
-        : (theoretical == corrected ? progress.latestAiredCnTitle : null);
-
-    return SubjectProgress(
-      totalEpsDeclared: progress.totalEpsDeclared,
-      totalEpsListed: progress.totalEpsListed,
-      airedEps: corrected,
-      latestAiredEp: corrected > 0 ? corrected : null,
-      latestAiredCnTitle: correctedEpTitle,
-      latestAiredAtLabel: theoretical == corrected
-          ? progress.latestAiredAtLabel
-          : null,
-      nextEp: nextEp,
-      ratingScore: progress.ratingScore,
-      episodeCommentCounts: progress.episodeCommentCounts,
-      episodeTitleByEp: progress.episodeTitleByEp,
-      progressText: totalEps == null ? '$corrected/未知' : '$corrected/$totalEps',
+      progressText: totalEps == null ? '$clamped/未知' : '$clamped/$totalEps',
     );
   }
 
@@ -3269,12 +908,13 @@ class _BangumiHomePageState extends State<BangumiHomePage>
 
     final int? manualDelta = _manualProgressCorrections[subjectId];
     if (manualDelta != null) {
-      return _applyDeltaCorrection(progress, manualDelta);
+      final int theoretical = _resolveTheoreticalAiredEp(progress);
+      return _applyCorrection(progress, theoretical + manualDelta);
     }
 
     final int? legacyAbsolute = _legacyAbsoluteProgressCorrections[subjectId];
     if (legacyAbsolute != null) {
-      final SubjectProgress corrected = _applyAbsoluteCorrection(
+      final SubjectProgress corrected = _applyCorrection(
         progress,
         legacyAbsolute,
       );
@@ -3918,202 +1558,6 @@ class _BangumiHomePageState extends State<BangumiHomePage>
     _showStatus(doneStatusText);
   }
 
-  Future<void> _ensureBgmListScheduleCandidatesLoaded({
-    bool forceRefresh = false,
-  }) async {
-    if (!forceRefresh && _bgmScheduleCandidates.isNotEmpty) {
-      return;
-    }
-    if (forceRefresh) {
-      _appendDebugLog('日历: 强制重新抓取 BGMLIST 全部番组 JSON');
-    }
-
-    final String onAirJson = await _service.fetchBgmListOnAirJson();
-    if (onAirJson.trim().isEmpty) {
-      _bgmScheduleCandidates = <BgmListScheduleCandidate>[];
-      return;
-    }
-
-    final List<BgmListScheduleCandidate> parsed =
-        _service.parseBgmListScheduleCandidates(onAirJson);
-    _bgmScheduleCandidates = parsed;
-    _appendDebugLog('日历: BGMLIST 候选条目 ${parsed.length} 条');
-  }
-
-  Future<int?> _loadSubjectTotalEpisodesCached(String subjectId) async {
-    if (subjectId.isEmpty) {
-      return null;
-    }
-    if (_subjectTotalEpisodesCache.containsKey(subjectId)) {
-      return _subjectTotalEpisodesCache[subjectId];
-    }
-
-    try {
-      final int? total = await _service.fetchSubjectTotalEpisodes(subjectId);
-      _subjectTotalEpisodesCache[subjectId] = total;
-      return total;
-    } catch (e) {
-      _appendDebugLog('日历: 获取总集数失败 subject=$subjectId ($e)');
-      _subjectTotalEpisodesCache[subjectId] = null;
-      return null;
-    }
-  }
-
-  Future<bool> _isCurrentSeasonCandidate(
-    BgmListScheduleCandidate candidate,
-    DateTime nowJst,
-  ) async {
-    final int? totalEpisodes = await _loadSubjectTotalEpisodesCached(
-      candidate.subjectId,
-    );
-    if (totalEpisodes == null || totalEpisodes <= 0) {
-      _appendDebugLog('日历: 跳过 ${candidate.subjectId}，Bangumi API 总集数缺失');
-      return false;
-    }
-
-    final int spanDays = candidate.periodDays * math.max(0, totalEpisodes - 1);
-    final DateTime estimatedEnd = candidate.beginJst.add(
-      Duration(days: spanDays),
-    );
-    return !nowJst.isBefore(candidate.beginJst) && !nowJst.isAfter(estimatedEnd);
-  }
-
-  Future<List<BgmListScheduleCandidate>> _resolveCurrentSeasonCandidates(
-    List<BgmListScheduleCandidate> source,
-  ) async {
-    if (source.isEmpty) {
-      return <BgmListScheduleCandidate>[];
-    }
-
-    final DateTime nowJst = DateTime.now().toUtc().add(
-      const Duration(hours: 9),
-    );
-    final Map<String, BgmListScheduleCandidate> uniqueById =
-        <String, BgmListScheduleCandidate>{};
-    for (final BgmListScheduleCandidate item in source) {
-      uniqueById.putIfAbsent(item.subjectId, () => item);
-    }
-    final List<BgmListScheduleCandidate> candidates = uniqueById.values
-        .where((BgmListScheduleCandidate item) =>
-            !item.beginJst.isAfter(nowJst) &&
-            item.periodDays > 0 &&
-            item.weekdayJst.trim().isNotEmpty &&
-            item.updateTimeJst.trim().isNotEmpty)
-        .toList();
-
-    if (candidates.isEmpty) {
-      return <BgmListScheduleCandidate>[];
-    }
-
-    final List<BgmListScheduleCandidate> included = <BgmListScheduleCandidate>[];
-    final int concurrency = math.max(
-      1,
-      math.min(_settingProgressConcurrency, 12),
-    );
-    int nextIndex = 0;
-
-    int? takeNextIndex() {
-      if (nextIndex >= candidates.length) {
-        return null;
-      }
-      final int current = nextIndex;
-      nextIndex += 1;
-      return current;
-    }
-
-    Future<void> worker() async {
-      while (true) {
-        final int? i = takeNextIndex();
-        if (i == null) {
-          return;
-        }
-
-        final BgmListScheduleCandidate candidate = candidates[i];
-        final bool include = await _isCurrentSeasonCandidate(candidate, nowJst);
-        if (include) {
-          included.add(candidate);
-        }
-      }
-    }
-
-    final int workerCount = math.min(concurrency, candidates.length);
-    await Future.wait(
-      List<Future<void>>.generate(workerCount, (_) => worker()),
-    );
-
-    return included;
-  }
-
-  List<DaySchedule> _buildScheduleFromCandidates(
-    List<BgmListScheduleCandidate> candidates,
-  ) {
-    const List<String> orderedWeekdays = <String>[
-      '星期一',
-      '星期二',
-      '星期三',
-      '星期四',
-      '星期五',
-      '星期六',
-      '星期日',
-    ];
-    final Map<String, List<SubjectItem>> grouped = <String, List<SubjectItem>>{
-      for (final String day in orderedWeekdays) day: <SubjectItem>[],
-    };
-
-    for (final BgmListScheduleCandidate candidate in candidates) {
-      if (!grouped.containsKey(candidate.weekdayJst)) {
-        continue;
-      }
-
-      grouped[candidate.weekdayJst]!.add(
-        SubjectItem(
-          subjectId: candidate.subjectId,
-          subjectUrl: candidate.subjectUrl,
-          nameCn: candidate.titleCn,
-          nameOrigin: candidate.titleJp,
-          coverUrl: candidate.coverUrl,
-          updateTime: candidate.updateTimeJst,
-        ),
-      );
-    }
-
-    final List<DaySchedule> schedule = <DaySchedule>[];
-    for (final String weekday in orderedWeekdays) {
-      final List<SubjectItem> items = grouped[weekday] ?? <SubjectItem>[];
-      if (items.isEmpty) {
-        continue;
-      }
-      items.sort((SubjectItem a, SubjectItem b) {
-        final int timeCompare = _parseUpdateTimeMinutes(
-          a.updateTime,
-        ).compareTo(_parseUpdateTimeMinutes(b.updateTime));
-        if (timeCompare != 0) {
-          return timeCompare;
-        }
-        return a.displayName.toLowerCase().compareTo(
-          b.displayName.toLowerCase(),
-        );
-      });
-      schedule.add(DaySchedule(weekday: weekday, items: items));
-    }
-
-    return schedule;
-  }
-
-  Future<List<DaySchedule>> _buildScheduleFromBgmListApi({
-    bool forceRefresh = false,
-  }) async {
-    await _ensureBgmListScheduleCandidatesLoaded(forceRefresh: forceRefresh);
-    if (_bgmScheduleCandidates.isEmpty) {
-      return <DaySchedule>[];
-    }
-
-    final List<BgmListScheduleCandidate> currentSeason =
-        await _resolveCurrentSeasonCandidates(_bgmScheduleCandidates);
-    _appendDebugLog('日历: BGMLIST 当期条目 ${currentSeason.length} 条');
-    return _buildScheduleFromCandidates(currentSeason);
-  }
-
   /// Fetch the BGMLIST onair API and append any shows that began within the
   /// last year and are confirmed to still be airing.  This catches half-year
   /// (cours-spanning) titles that are not part of the current archive page.
@@ -4364,7 +1808,7 @@ class _BangumiHomePageState extends State<BangumiHomePage>
           enrichedJst.fold<int>(0, (int sum, DaySchedule day) => sum + day.items.length) -
           mergedScheduleJst.fold<int>(0, (int sum, DaySchedule day) => sum + day.items.length);
       if (enrichedCount > 0) {
-        _appendDebugLog('日历: OnAir 补充后共计 ${enrichedCount} 部');
+        _appendDebugLog('日历: OnAir 补充后共计 $enrichedCount 部');
       }
       final List<DaySchedule> mergedSchedule = _convertScheduleFromJstForDisplay(
         enrichedJst,
@@ -5781,71 +3225,31 @@ class _BangumiHomePageState extends State<BangumiHomePage>
     return '评分 $text';
   }
 
-  Future<void> _saveSelectedWatchlist() async {
-    final Set<String> previousWatchIds = _watchlist
-        .map((SubjectItem item) => item.subjectId)
-        .where((String id) => id.isNotEmpty)
-        .toSet();
-
-    final Map<String, SubjectItem> itemMap = <String, SubjectItem>{
-      for (final SubjectItem item in _allItems)
-        if (item.subjectId.isNotEmpty) item.subjectId: item,
-    };
-
-    final List<SubjectItem> selected = _selectedIds
-        .where((String id) => itemMap.containsKey(id))
-        .map((String id) => itemMap[id]!)
-        .toList();
-
-    final Set<String> selectedIdsNow = selected
-        .map((SubjectItem item) => item.subjectId)
-        .where((String id) => id.isNotEmpty)
-        .toSet();
-
-    final Set<String> newWatchIds = selectedIdsNow.difference(previousWatchIds);
-    final Set<String> removedWatchIds = previousWatchIds.difference(
-      selectedIdsNow,
-    );
-
-    setState(() {
-      _watchlist = selected;
-      _manualProgressCorrections.removeWhere(
-        (String id, int _) => removedWatchIds.contains(id),
-      );
-      _legacyAbsoluteProgressCorrections.removeWhere(
-        (String id, int _) => removedWatchIds.contains(id),
-      );
-      for (final String removedId in removedWatchIds) {
-        _progressCache.remove(removedId);
-        _rawProgressCache.remove(removedId);
-      }
-    });
-    _showStatus('已保存 ${_watchlist.length} 部关注番剧');
-
-    await _saveWatchlist();
-    if (removedWatchIds.isNotEmpty) {
-      await _saveProgressCorrections();
-    }
-
-    if (!mounted) {
+  Future<void> _showSubjectDetail(SubjectItem item) async {
+    if (item.subjectId.isEmpty) {
+      _showStatus('条目 ID 为空');
       return;
     }
-
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text('已保存 ${_watchlist.length} 部关注番剧')));
-    await _refreshProgress(onlySubjectIds: newWatchIds);
-  }
-
-  
-  void _selectAll(bool selected) {
-    setState(() {
-      if (selected) {
-        _selectedIds = _allItems.map((SubjectItem e) => e.subjectId).toSet();
-      } else {
-        _selectedIds.clear();
-      }
-    });
+    if (!mounted) return;
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (BuildContext context) {
+        return _SubjectDetailBody(
+          subjectId: item.subjectId,
+          item: item,
+          service: _service,
+          coverCacheManager: _coverCacheManager,
+          isFollowed: _watchlist.any((SubjectItem x) => x.subjectId == item.subjectId),
+          onOpenInBrowser: () => _openSubjectInBrowser(item),
+          onToggleFollow: () => _toggleWatchFromToday(item),
+        );
+      },
+    );
   }
 
   Future<void> _openSubjectInBrowser(SubjectItem item) async {
@@ -6002,7 +3406,7 @@ class _BangumiHomePageState extends State<BangumiHomePage>
             if (showCover)
               InkWell(
                 borderRadius: BorderRadius.circular(8),
-                onTap: () => _openSubjectInBrowser(item),
+                onTap: () => _showSubjectDetail(item),
                 child: ClipRRect(
                   borderRadius: BorderRadius.circular(8),
                   child: item.localCoverPath.isNotEmpty
@@ -6018,17 +3422,9 @@ class _BangumiHomePageState extends State<BangumiHomePage>
                               ),
                         )
                       : item.coverUrl.isNotEmpty
-                      ? Image.network(
-                          item.coverUrl,
+                      ? _buildCoverPlaceholder(
                           width: coverWidth,
                           height: coverHeight,
-                          fit: BoxFit.cover,
-                          headers: imageRequestHeaders,
-                          errorBuilder: (_, error, stackTrace) =>
-                              _buildCoverPlaceholder(
-                                width: coverWidth,
-                                height: coverHeight,
-                              ),
                         )
                       : _buildCoverPlaceholder(
                           width: coverWidth,
@@ -6761,7 +4157,7 @@ class _BangumiHomePageState extends State<BangumiHomePage>
                 Tab(text: '今日更新'),
                 Tab(text: '我的关注'),
                 Tab(text: '番剧周历'),
-                Tab(text: '选择关注'),
+                Tab(text: '番剧搜索'),
               ],
             ),
             _buildAppBarLogoLayer(),
@@ -7219,89 +4615,366 @@ class _BangumiHomePageState extends State<BangumiHomePage>
   }
 
   
-  Widget _buildSelectTab() {
-    final String keyword = _searchController.text.trim().toLowerCase();
+  Future<void> _performSearch(String keyword) async {
+    if (keyword.trim().isEmpty) return;
+    setState(() {
+      _isSearching = true;
+      _searchError = '';
+      _allSearchResults = <SearchSubjectResult>[];
+      _searchTotalResults = 0;
+      _currentSearchPage = 0;
+    });
 
-    final List<SubjectItem> sortedItems = List<SubjectItem>.from(_allItems)
-      ..sort((SubjectItem a, SubjectItem b) {
-        final String aName = (a.nameCn.isNotEmpty ? a.nameCn : a.nameOrigin)
-            .toLowerCase();
-        final String bName = (b.nameCn.isNotEmpty ? b.nameCn : b.nameOrigin)
-            .toLowerCase();
-        return aName.compareTo(bName);
+    try {
+      const int pageSize = 20;
+      final List<SearchSubjectResult> allResults = <SearchSubjectResult>[];
+      final Set<String> seenIds = <String>{};
+
+      // Fetch first page (up to 20 results).
+      final SearchSubjectsResponse response =
+          await _service.searchSubjects(keyword, limit: pageSize, offset: 0);
+      int total = response.total;
+
+      for (final SearchSubjectResult r in response.results) {
+        if (seenIds.add(r.subject.subjectId)) {
+          allResults.add(r);
+        }
+      }
+
+      // Fetch remaining pages concurrently (up to max 200 results).
+      if (total > pageSize) {
+        final int maxOffset = math.min(total, 200);
+        final List<Future<SearchSubjectsResponse>> pending =
+            <Future<SearchSubjectsResponse>>[];
+        for (int offset = pageSize; offset < maxOffset; offset += pageSize) {
+          pending.add(_service.searchSubjects(
+            keyword,
+            limit: pageSize,
+            offset: offset,
+          ));
+        }
+        final List<SearchSubjectsResponse> rest = await Future.wait(pending);
+        for (final SearchSubjectsResponse page in rest) {
+          for (final SearchSubjectResult r in page.results) {
+            if (seenIds.add(r.subject.subjectId)) {
+              allResults.add(r);
+            }
+          }
+        }
+      }
+
+      // Sort by popularity desc, then ratingScore desc
+      allResults.sort((SearchSubjectResult a, SearchSubjectResult b) {
+        final int popCmp = b.popularity.compareTo(a.popularity);
+        if (popCmp != 0) return popCmp;
+        final double aScore = a.ratingScore ?? 0;
+        final double bScore = b.ratingScore ?? 0;
+        return bScore.compareTo(aScore);
       });
 
-    final List<SubjectItem> filtered = sortedItems.where((SubjectItem item) {
-      final String displayName = item.displayName;
-      final String searchText =
-          '${displayName.toLowerCase()} ${item.nameOrigin.toLowerCase()} ${item.subjectId.toLowerCase()}';
-      return keyword.isEmpty || searchText.contains(keyword);
-    }).toList();
+      if (!mounted) return;
+      setState(() {
+        _allSearchResults = allResults;
+        _searchTotalResults = allResults.length;
+        _isSearching = false;
+      });
+
+      // Cache covers through BangumiService (uses Clash proxy).
+      // Image.network bypasses the proxy, so we download via
+      // the service and display from local files.
+      _cacheSearchResultCovers();
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _isSearching = false;
+        _searchError = '搜索失败：$e';
+      });
+    }
+  }
+
+  Future<void> _cacheSearchResultCovers() async {
+    for (final SearchSubjectResult r in _allSearchResults) {
+      final String id = r.subject.subjectId;
+      if (id.isEmpty || r.subject.coverUrl.isEmpty) continue;
+      if (_searchCoverPaths.containsKey(id)) continue;
+      try {
+        final String? path = await _coverCacheManager.ensureCached(
+          subjectId: id,
+          imageUrl: r.subject.coverUrl,
+          fetch: (String url) => _service.fetchImageWithRetry(
+            url,
+            purpose: '搜索结果封面缓存',
+          ),
+        ).timeout(const Duration(seconds: 12));
+        if (path != null && mounted) {
+          setState(() {
+            _searchCoverPaths[id] = path;
+          });
+        }
+      } catch (_) {}
+    }
+  }
+
+  Widget _buildSearchResultCover(SubjectItem item) {
+    final String? cached = _searchCoverPaths[item.subjectId];
+    if (cached != null && File(cached).existsSync()) {
+      return Image.file(
+        File(cached),
+        width: 72,
+        height: 96,
+        fit: BoxFit.cover,
+        errorBuilder: (_, _, _) =>
+            _buildCoverPlaceholder(width: 72, height: 96),
+      );
+    }
+    // Image.network doesn't go through the Clash proxy, so it can't reach
+    // lain.bgm.tv directly. Show placeholder — cache will fill via
+    // _cacheSearchResultCovers() and trigger a rebuild.
+    return _buildCoverPlaceholder(width: 72, height: 96);
+  }
+
+  Widget _buildBadge(String text, {bool isHighRating = false}) {
+    final ColorScheme colors = Theme.of(context).colorScheme;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
+        color: isHighRating
+            ? colors.tertiaryContainer
+            : colors.secondaryContainer,
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Text(
+        text,
+        style: TextStyle(
+          fontSize: 11,
+          color: isHighRating
+              ? colors.onTertiaryContainer
+              : colors.onSecondaryContainer,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSearchResultTile(SearchSubjectResult result) {
+    final ColorScheme colors = Theme.of(context).colorScheme;
+    final SubjectItem item = result.subject;
+    final bool isFollowed = _watchlist
+        .any((SubjectItem x) => x.subjectId == item.subjectId);
+    final String title =
+        item.displayName.isNotEmpty ? item.displayName : item.subjectId;
+    final String subtitle = item.nameOrigin.isNotEmpty &&
+            item.nameOrigin != item.displayName
+        ? item.nameOrigin
+        : '';
+
+    return Card(
+      margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            // Cover image (72x96)
+            InkWell(
+              borderRadius: BorderRadius.circular(8),
+              onTap: () => _showSubjectDetail(item),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(8),
+                child: item.coverUrl.isNotEmpty
+                    ? _buildSearchResultCover(item)
+                    : _buildCoverPlaceholder(width: 72, height: 96),
+              ),
+            ),
+            const SizedBox(width: 12),
+            // Title + badges
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: <Widget>[
+                  GestureDetector(
+                    onTap: () => _showSubjectDetail(item),
+                    child: Text(
+                      title,
+                      style: Theme.of(context)
+                          .textTheme
+                          .titleSmall
+                          ?.copyWith(fontWeight: FontWeight.bold),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  if (subtitle.isNotEmpty) ...[
+                    const SizedBox(height: 2),
+                    Text(
+                      subtitle,
+                      style: Theme.of(context)
+                          .textTheme
+                          .bodySmall
+                          ?.copyWith(color: colors.onSurfaceVariant),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ],
+                  const SizedBox(height: 8),
+                  Wrap(
+                    spacing: 6,
+                    runSpacing: 4,
+                    children: <Widget>[
+                      if (result.ratingScore != null &&
+                          result.ratingScore! > 0)
+                        _buildBadge(
+                          '评分 ${result.ratingScore!.toStringAsFixed(1)}',
+                          isHighRating: result.ratingScore! >= 7.5,
+                        ),
+                      if (result.airDate.isNotEmpty)
+                        _buildBadge(result.airDate),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+            // Follow/unfollow button
+            const SizedBox(width: 4),
+            Column(
+              mainAxisSize: MainAxisSize.min,
+              children: <Widget>[
+                IconButton(
+                  icon: Icon(
+                    isFollowed ? Icons.star : Icons.star_border,
+                    color: isFollowed ? Colors.amber : null,
+                  ),
+                  tooltip: isFollowed ? '取消关注' : '关注',
+                  onPressed: () => _toggleWatchFromToday(item),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSelectTab() {
+    const int pageSize = 10;
+    final int totalPages = _allSearchResults.isEmpty
+        ? 0
+        : (_allSearchResults.length + pageSize - 1) ~/ pageSize;
+    final int pageStart = _currentSearchPage * pageSize;
+    final int pageEnd = (pageStart + pageSize).clamp(0, _allSearchResults.length);
+    final List<SearchSubjectResult> pageItems = pageStart < _allSearchResults.length
+        ? _allSearchResults.sublist(pageStart, pageEnd)
+        : <SearchSubjectResult>[];
 
     return Column(
       children: <Widget>[
         Padding(
           padding: const EdgeInsets.fromLTRB(12, 12, 12, 6),
-          child: Row(
-            children: <Widget>[
-              FilledButton(
-                onPressed: _saveSelectedWatchlist,
-                child: const Text('保存关注'),
-              ),
-              const SizedBox(width: 8),
-              OutlinedButton(
-                onPressed: () => _selectAll(true),
-                child: const Text('全选'),
-              ),
-              const SizedBox(width: 8),
-              OutlinedButton(
-                onPressed: () => _selectAll(false),
-                child: const Text('全不选'),
-              ),
-            ],
-          ),
-        ),
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
           child: TextField(
             controller: _searchController,
-            decoration: const InputDecoration(
+            textInputAction: TextInputAction.search,
+            decoration: InputDecoration(
               labelText: '搜索番剧',
-              prefixIcon: Icon(Icons.search),
-              border: OutlineInputBorder(),
+              hintText: '输入番剧日文名或中文名',
+              suffixIcon: IconButton(
+                icon: const Icon(Icons.search),
+                onPressed: () =>
+                    _performSearch(_searchController.text.trim()),
+              ),
+              border: const OutlineInputBorder(),
             ),
-            onChanged: (_) => setState(() {}),
+            onChanged: (value) {
+              if (value.trim().isEmpty) {
+                setState(() {
+                  _allSearchResults = <SearchSubjectResult>[];
+                  _searchTotalResults = 0;
+                  _searchError = '';
+                  _currentSearchPage = 0;
+                });
+              }
+            },
+            onSubmitted: (value) {
+              if (value.trim().isNotEmpty) _performSearch(value.trim());
+            },
           ),
         ),
-        Expanded(
-          child: filtered.isEmpty
-              ? const Center(child: Text('没有匹配结果'))
-              : ListView.builder(
-                  padding: const EdgeInsets.only(bottom: 96),
-                  itemCount: filtered.length,
-                  itemBuilder: (BuildContext context, int index) {
-                    final SubjectItem item = filtered[index];
-                    final String line =
-                        item.nameOrigin.isNotEmpty &&
-                            item.nameOrigin != item.displayName
-                        ? '${item.displayName} / ${item.nameOrigin}'
-                        : item.displayName;
-                    return CheckboxListTile(
-                      value: _selectedIds.contains(item.subjectId),
-                      title: Text(line.isEmpty ? item.subjectId : line),
-                      onChanged: (bool? checked) {
-                        setState(() {
-                          if (checked ?? false) {
-                            _selectedIds.add(item.subjectId);
-                          } else {
-                            _selectedIds.remove(item.subjectId);
-                          }
-                        });
-                      },
-                    );
-                  },
-                ),
-        ),
+        if (!_isSearching &&
+            _searchError.isEmpty &&
+            _allSearchResults.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: Text(
+                '共 $_searchTotalResults 条结果（按热度排序）',
+                style: Theme.of(context)
+                    .textTheme
+                    .bodySmall
+                    ?.copyWith(
+                        color: Theme.of(context)
+                            .colorScheme
+                            .onSurfaceVariant),
+              ),
+            ),
+          ),
+        if (_searchError.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.all(16),
+            child: Text(
+              _searchError,
+              style:
+                  TextStyle(color: Theme.of(context).colorScheme.error),
+            ),
+          ),
+        if (_isSearching)
+          const Expanded(
+            child: Center(child: CircularProgressIndicator()),
+          ),
+        if (!_isSearching && _searchError.isEmpty)
+          Expanded(
+            child: _allSearchResults.isEmpty
+                ? const Center(child: Text('输入关键词搜索番剧'))
+                : ListView.builder(
+                    padding: const EdgeInsets.only(bottom: 96),
+                    itemCount: pageItems.length + 1, // +1 for pagination row
+                    itemBuilder: (BuildContext context, int index) {
+                      if (index < pageItems.length) {
+                        return _buildSearchResultTile(pageItems[index]);
+                      }
+                      // Pagination footer
+                      return Padding(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 12, vertical: 12),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: <Widget>[
+                            FilledButton.tonal(
+                              onPressed: _currentSearchPage > 0
+                                  ? () => setState(() =>
+                                        _currentSearchPage--)
+                                  : null,
+                              child: const Text('上一页'),
+                            ),
+                            const SizedBox(width: 16),
+                            Text(
+                              '${_currentSearchPage + 1} / $totalPages 页',
+                              style: Theme.of(context)
+                                  .textTheme
+                                  .bodyMedium,
+                            ),
+                            const SizedBox(width: 16),
+                            FilledButton.tonal(
+                              onPressed: _currentSearchPage + 1 < totalPages
+                                  ? () => setState(() =>
+                                        _currentSearchPage++)
+                                  : null,
+                              child: const Text('下一页'),
+                            ),
+                          ],
+                        ),
+                      );
+                    },
+                  ),
+          ),
       ],
     );
   }
@@ -7339,7 +5012,7 @@ class _BangumiHomePageState extends State<BangumiHomePage>
         crossAxisAlignment: CrossAxisAlignment.start,
         children: <Widget>[
           GestureDetector(
-            onTap: () => _openSubjectInBrowser(item),
+            onTap: () => _showSubjectDetail(item),
             child: Container(
               decoration: BoxDecoration(
                 borderRadius: BorderRadius.circular(10),
@@ -7359,15 +5032,7 @@ class _BangumiHomePageState extends State<BangumiHomePage>
                                 _buildWeekCalendarPlaceholder(),
                           )
                         : item.coverUrl.isNotEmpty
-                        ? Image.network(
-                            item.coverUrl,
-                            width: 108,
-                            height: 146,
-                            fit: BoxFit.cover,
-                            headers: imageRequestHeaders,
-                            errorBuilder: (_, error, stackTrace) =>
-                                _buildWeekCalendarPlaceholder(),
-                          )
+                        ? _buildWeekCalendarPlaceholder()
                         : _buildWeekCalendarPlaceholder(),
                     Positioned.fill(
                       child: DecoratedBox(
@@ -7759,5 +5424,725 @@ class _BangumiHomePageState extends State<BangumiHomePage>
         ),
       ),
     );
+  }
+}
+
+/// 柱状图渲染器 — 用于评分分布等场景。
+class _CommentBarPainter extends CustomPainter {
+  _CommentBarPainter({
+    required this.values,
+    required this.maxCount,
+    required this.barWidth,
+    required this.chartBarsHeight,
+    required this.effectiveGap,
+    required this.minBarHeight,
+    required this.baseColor,
+  });
+
+  final List<int> values;
+  final int maxCount;
+  final double barWidth;
+  final double chartBarsHeight;
+  final double effectiveGap;
+  final double minBarHeight;
+  final Color baseColor;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (values.isEmpty || maxCount <= 0) return;
+
+    final Paint paint = Paint()..style = PaintingStyle.fill;
+    final double startX = (size.width - _totalWidth) / 2;
+
+    for (int i = 0; i < values.length; i++) {
+      final int value = values[i];
+      final double ratio = value <= 0
+          ? 0.08
+          : value / maxCount;
+      final double barHeight = (chartBarsHeight * ratio).clamp(minBarHeight, chartBarsHeight);
+      final Color color = Color.lerp(
+        baseColor.withValues(alpha: 0.25),
+        baseColor,
+        ratio.clamp(0.0, 1.0),
+      ) ?? baseColor;
+
+      paint.color = color;
+      final double x = startX + i * (barWidth + effectiveGap);
+      final double y = chartBarsHeight - barHeight;
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(
+          Rect.fromLTWH(x, y, barWidth, barHeight),
+          const Radius.circular(2),
+        ),
+        paint,
+      );
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _CommentBarPainter oldDelegate) {
+    return oldDelegate.values != values ||
+        oldDelegate.maxCount != maxCount ||
+        oldDelegate.barWidth != barWidth ||
+        oldDelegate.chartBarsHeight != chartBarsHeight ||
+        oldDelegate.effectiveGap != effectiveGap ||
+        oldDelegate.minBarHeight != minBarHeight ||
+        oldDelegate.baseColor != baseColor;
+  }
+
+  double get _totalWidth =>
+      values.length * barWidth +
+      (values.length - 1) * effectiveGap;
+}
+
+/// 条目详情底部弹窗内容。
+class _SubjectDetailBody extends StatefulWidget {
+  const _SubjectDetailBody({
+    required this.subjectId,
+    required this.item,
+    required this.service,
+    required this.coverCacheManager,
+    required this.onOpenInBrowser,
+    required this.onToggleFollow,
+    required this.isFollowed,
+  });
+
+  final String subjectId;
+  final SubjectItem item;
+  final BangumiService service;
+  final CoverCacheManager coverCacheManager;
+  final VoidCallback onOpenInBrowser;
+  final VoidCallback onToggleFollow;
+  final bool isFollowed;
+
+  @override
+  State<_SubjectDetailBody> createState() => _SubjectDetailBodyState();
+}
+
+class _SubjectDetailBodyState extends State<_SubjectDetailBody> {
+  Map<String, dynamic>? _data;
+  String? _error;
+  bool _loading = true;
+  String? _localCoverPath;
+  bool _summaryExpanded = false;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _loadData());
+  }
+
+  Future<void> _loadData() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+      _data = null;
+    });
+    try {
+      final Map<String, dynamic>? data =
+          await widget.service.fetchSubjectFromApi(widget.subjectId);
+      if (!mounted) return;
+
+      if (data == null) {
+        setState(() {
+          _error = '获取条目信息失败';
+          _loading = false;
+        });
+        return;
+      }
+
+      // 缓存封面
+      String? coverUrl;
+      final dynamic images = data['images'];
+      if (images is Map<String, dynamic>) {
+        coverUrl = (images['large'] ?? images['common'] ?? images['medium'] ?? '').toString();
+      }
+      if ((coverUrl == null || coverUrl.isEmpty) && widget.item.coverUrl.isNotEmpty) {
+        coverUrl = widget.item.coverUrl;
+      }
+
+      String? localPath;
+      if (coverUrl != null && coverUrl.isNotEmpty) {
+        try {
+          localPath = await widget.coverCacheManager.ensureCached(
+            subjectId: widget.subjectId,
+            imageUrl: coverUrl,
+            fetch: (String url) => widget.service.fetchImageWithRetry(url),
+          ).timeout(const Duration(seconds: 12));
+        } catch (_) {}
+      }
+
+      if (!mounted) return;
+      if (mounted) {
+        setState(() {
+          _data = data;
+          _localCoverPath = localPath;
+          _loading = false;
+        });
+      }
+    } catch (e) {
+      if (!mounted) return;
+      if (mounted) {
+        setState(() {
+          _error = '加载失败: $e';
+          _loading = false;
+        });
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final ColorScheme colors = Theme.of(context).colorScheme;
+
+    if (_loading) {
+      return SizedBox(
+        height: 300,
+        child: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: <Widget>[
+              const CircularProgressIndicator(),
+              const SizedBox(height: 16),
+              Text('正在加载条目信息…', style: Theme.of(context).textTheme.bodyMedium),
+            ],
+          ),
+        ),
+      );
+    }
+
+    if (_error != null || _data == null) {
+      return SizedBox(
+        height: 300,
+        child: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: <Widget>[
+                Icon(Icons.error_outline, size: 48, color: colors.error),
+                const SizedBox(height: 12),
+                Text(
+                  _error ?? '未知错误',
+                  textAlign: TextAlign.center,
+                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: colors.error),
+                ),
+                const SizedBox(height: 16),
+                FilledButton.tonal(
+                  onPressed: () {
+                    _loadData();
+                  },
+                  child: const Text('重试'),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+
+    final Map<String, dynamic> data = _data!;
+    final String nameCn = _readString(data['name_cn']) ?? widget.item.nameCn;
+    final String nameOrigin = _readString(data['name']) ?? widget.item.nameOrigin;
+
+    return DraggableScrollableSheet(
+      initialChildSize: 0.85,
+      minChildSize: 0.5,
+      maxChildSize: 0.95,
+      expand: false,
+      builder: (BuildContext context, ScrollController scrollController) {
+        return Padding(
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+          child: ListView(
+            controller: scrollController,
+            children: <Widget>[
+              // Top row: header (left) + cover + rating (right)
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: <Widget>[
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: <Widget>[
+                        _buildHeader(colors, nameCn, nameOrigin),
+                        const SizedBox(height: 16),
+                        _buildInfoChips(colors, data),
+                        const SizedBox(height: 12),
+                        if (data['meta_tags'] is List)
+                          _buildGenreTags(colors, data['meta_tags'] as List<dynamic>),
+                        if (data['infobox'] is List) ...[
+                          const SizedBox(height: 12),
+                          _buildInfobox(colors, data['infobox'] as List<dynamic>),
+                        ],
+                        const SizedBox(height: 12),
+                        _buildFollowButton(colors),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  // Right column: cover + rating below
+                  SizedBox(
+                    width: 260,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: <Widget>[
+                        _buildCover(colors),
+                        if (data['rating'] is Map<String, dynamic>) ...[
+                          const SizedBox(height: 12),
+                          _buildRatingSection(colors, data['rating'] as Map<String, dynamic>),
+                        ],
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              // Summary
+              if (_readString(data['summary']) case final String summary?)
+                _buildSummary(colors, summary),
+              const SizedBox(height: 20),
+              // Action button
+              _buildActionButton(colors),
+              const SizedBox(height: 24),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildFollowButton(ColorScheme colors) {
+    final bool followed = widget.isFollowed;
+    return SizedBox(
+      width: double.infinity,
+      child: followed
+          ? OutlinedButton.icon(
+              onPressed: () { widget.onToggleFollow(); },
+              icon: const Icon(Icons.star, size: 16),
+              label: const Text('已关注'),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: colors.error,
+              ),
+            )
+          : FilledButton.tonalIcon(
+              onPressed: () { widget.onToggleFollow(); },
+              icon: const Icon(Icons.add, size: 16),
+              label: const Text('关注'),
+            ),
+    );
+  }
+
+  Widget _buildHeader(ColorScheme colors, String nameCn, String nameOrigin) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        // Title
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            Text(
+              nameCn.isNotEmpty ? nameCn : nameOrigin,
+              style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            if (nameCn.isNotEmpty && nameOrigin.isNotEmpty && nameOrigin != nameCn) ...[
+              const SizedBox(height: 4),
+              Text(
+                nameOrigin,
+                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                  color: colors.onSurfaceVariant,
+                ),
+              ),
+            ],
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _buildCover(ColorScheme colors) {
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(8),
+      child: _localCoverPath != null && File(_localCoverPath!).existsSync()
+          ? Image.file(
+              File(_localCoverPath!),
+              width: 260,
+              height: 346,
+              fit: BoxFit.cover,
+              errorBuilder: (_, _, _) => _buildCoverPlaceholder(colors),
+            )
+          : _buildCoverPlaceholder(colors),
+    );
+  }
+
+  Widget _buildCoverPlaceholder(ColorScheme colors) {
+    return Container(
+      width: 260,
+      height: 346,
+      color: colors.surfaceContainerHighest,
+      child: Icon(
+        Icons.movie_creation_outlined,
+        size: 36,
+        color: colors.onSurfaceVariant,
+      ),
+    );
+  }
+
+  Widget _buildRatingSection(ColorScheme colors, Map<String, dynamic> rating) {
+    final double score = _readDouble(rating['score']) ?? 0;
+    final int total = _readInt(rating['total']) ?? 0;
+    final int rank = _readInt(rating['rank']) ?? 0;
+
+    final dynamic rawCount = rating['count'];
+    final List<int> values = List<int>.generate(10, (int i) {
+      if (rawCount is Map) {
+        return _readInt(rawCount['${i + 1}']) ?? 0;
+      }
+      return 0;
+    });
+    final int maxCount = values.fold<int>(0, (int a, int b) => a > b ? a : b);
+
+    final EpisodeCommentChartLayout chartLayout = EpisodeCommentChartLayout(
+      alignment: Alignment.centerRight,
+      offsetX: 0,
+      offsetY: 0,
+      width: 250,
+      height: 65,
+      headerHeight: 13,
+      headerBottomGap: 2,
+      barGap: 2,
+      minBarHeight: 2,
+      backgroundRadius: 12,
+      contentPaddingHorizontal: 8,
+      contentPaddingVertical: 5,
+      backgroundColor: colors.surface,
+      backgroundBorderColor: colors.outlineVariant,
+    );
+
+    return Container(
+      width: double.infinity,
+      height: chartLayout.height,
+      padding: EdgeInsets.symmetric(
+        horizontal: chartLayout.contentPaddingHorizontal,
+        vertical: chartLayout.contentPaddingVertical,
+      ),
+      decoration: BoxDecoration(
+        color: chartLayout.backgroundColor,
+        borderRadius: BorderRadius.circular(chartLayout.backgroundRadius),
+        border: Border.all(color: chartLayout.backgroundBorderColor),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          SizedBox(
+            height: chartLayout.headerHeight,
+            child: Row(
+              children: <Widget>[
+                Text('评分分布', style: Theme.of(context).textTheme.labelSmall),
+                const Spacer(),
+                Text(
+                  '评分 $score | 共 $total 人${rank > 0 ? ' | #$rank' : ''}',
+                  style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                    color: colors.onSurfaceVariant,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          SizedBox(height: chartLayout.headerBottomGap),
+          const SizedBox(height: 4),
+          Expanded(
+            child: LayoutBuilder(
+              builder: (BuildContext context, BoxConstraints constraints) {
+                final double availableWidth = constraints.maxWidth;
+                const double barCount = 10;
+                final double effectiveGap = chartLayout.barGap;
+                final double totalGap = effectiveGap * (barCount - 1);
+                final double barWidth = ((availableWidth - totalGap) / barCount).clamp(2.0, double.infinity);
+
+                final double labelHeight = 12;
+                // Reverse values so bars display 10 → 1 (left to right)
+                final List<int> reversed = List<int>.from(values.reversed);
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: <Widget>[
+                    Expanded(
+                      child: CustomPaint(
+                        size: Size(availableWidth, (constraints.maxHeight - labelHeight).clamp(0, double.infinity)),
+                        painter: _CommentBarPainter(
+                          values: reversed,
+                          maxCount: maxCount > 0 ? maxCount : 1,
+                          barWidth: barWidth,
+                          chartBarsHeight: (constraints.maxHeight - labelHeight - 2).clamp(0, double.infinity),
+                          effectiveGap: effectiveGap,
+                          minBarHeight: chartLayout.minBarHeight,
+                          baseColor: colors.primary,
+                        ),
+                      ),
+                    ),
+                    // X-axis labels (10 → 1)
+                    Row(
+                      children: List<Widget>.generate(10, (int i) {
+                        return Expanded(
+                          child: Text(
+                            '${10 - i}',
+                            textAlign: TextAlign.center,
+                            style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                              fontSize: 9,
+                              color: colors.onSurfaceVariant,
+                            ),
+                          ),
+                        );
+                      }),
+                    ),
+                  ],
+                );
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildInfoChips(ColorScheme colors, Map<String, dynamic> data) {
+    final List<Widget> chips = <Widget>[];
+
+    final String? date = _readString(data['date']);
+    if (date != null && date.isNotEmpty) {
+      chips.add(_buildChip(colors, date));
+    }
+
+    final String? platform = _readString(data['platform']);
+    if (platform != null && platform.isNotEmpty) {
+      chips.add(_buildChip(colors, platform));
+    }
+
+    final int? totalEps = _readInt(data['total_episodes']) ?? _readInt(data['eps']);
+    if (totalEps != null && totalEps > 0) {
+      chips.add(_buildChip(colors, '共 $totalEps 话'));
+    }
+
+    if (chips.isEmpty) return const SizedBox.shrink();
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Wrap(
+        spacing: 8,
+        runSpacing: 4,
+        children: chips,
+      ),
+    );
+  }
+
+  Widget _buildChip(ColorScheme colors, String text) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+      decoration: BoxDecoration(
+        color: colors.secondaryContainer,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Text(
+        text,
+        style: TextStyle(
+          fontSize: 12,
+          color: colors.onSecondaryContainer,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildGenreTags(ColorScheme colors, List<dynamic> tags) {
+    if (tags.isEmpty) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Wrap(
+        spacing: 6,
+        runSpacing: 4,
+        children: tags.whereType<String>().map((String tag) {
+          return Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+            decoration: BoxDecoration(
+              color: colors.tertiaryContainer,
+              borderRadius: BorderRadius.circular(6),
+            ),
+            child: Text(
+              tag,
+              style: TextStyle(
+                fontSize: 11,
+                color: colors.onTertiaryContainer,
+              ),
+            ),
+          );
+        }).toList(),
+      ),
+    );
+  }
+
+  Widget _buildInfobox(ColorScheme colors, List<dynamic> infobox) {
+    if (infobox.isEmpty) return const SizedBox.shrink();
+
+    final List<MapEntry<String, String>> entries = <MapEntry<String, String>>[];
+    for (final dynamic entry in infobox) {
+      if (entry is Map) {
+        final String key = _readString(entry['key']) ?? '';
+        final dynamic rawValue = entry['value'];
+        String value;
+        if (rawValue is List) {
+          value = rawValue.whereType<String>().join('、');
+        } else {
+          value = _readString(rawValue) ?? '';
+        }
+        if (key.isNotEmpty && value.isNotEmpty) {
+          entries.add(MapEntry<String, String>(key, value));
+        }
+      }
+    }
+
+    if (entries.isEmpty) return const SizedBox.shrink();
+
+    final List<MapEntry<String, String>> display = entries.take(6).toList();
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: display.map((MapEntry<String, String> e) {
+          return Padding(
+            padding: const EdgeInsets.symmetric(vertical: 2),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                SizedBox(
+                  width: 80,
+                  child: Text(
+                    '${e.key}:',
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      fontWeight: FontWeight.w600,
+                      color: colors.onSurfaceVariant,
+                    ),
+                  ),
+                ),
+                Expanded(
+                  child: Text(
+                    e.value,
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                ),
+              ],
+            ),
+          );
+        }).toList(),
+      ),
+    );
+  }
+
+  Widget _buildSummary(ColorScheme colors, String summary) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        Row(
+          children: <Widget>[
+            Text(
+              '简介',
+              style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(width: 6),
+            SizedBox(
+              width: 20,
+              height: 20,
+              child: IconButton(
+                padding: EdgeInsets.zero,
+                iconSize: 14,
+                icon: const Icon(Icons.copy),
+                tooltip: '复制简介',
+                onPressed: () {
+                  Clipboard.setData(ClipboardData(text: summary));
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('简介已复制'),
+                      duration: Duration(seconds: 2),
+                    ),
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 4),
+        AnimatedCrossFade(
+          firstChild: Text(
+            summary,
+            maxLines: 4,
+            overflow: TextOverflow.ellipsis,
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+          secondChild: Text(
+            summary,
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+          crossFadeState: _summaryExpanded
+              ? CrossFadeState.showSecond
+              : CrossFadeState.showFirst,
+          duration: const Duration(milliseconds: 200),
+        ),
+        if (summary.length > 120)
+          TextButton(
+            onPressed: () {
+              setState(() {
+                _summaryExpanded = !_summaryExpanded;
+              });
+            },
+            child: Text(_summaryExpanded ? '收起' : '展开'),
+          ),
+      ],
+    );
+  }
+
+  Widget _buildActionButton(ColorScheme colors) {
+    return SizedBox(
+      width: double.infinity,
+      child: OutlinedButton.icon(
+        onPressed: () {
+          Navigator.of(context).pop();
+          widget.onOpenInBrowser();
+        },
+        icon: const Icon(Icons.open_in_browser),
+        label: const Text('在浏览器中打开 Bangumi 条目'),
+      ),
+    );
+  }
+
+  // ---- Helper methods ----
+
+  String? _readString(dynamic value) {
+    if (value == null) return null;
+    if (value is String) return value;
+    return value.toString();
+  }
+
+  double? _readDouble(dynamic value) {
+    if (value == null) return null;
+    if (value is double) return value;
+    if (value is int) return value.toDouble();
+    if (value is String) {
+      final double? parsed = double.tryParse(value);
+      if (parsed != null) return parsed;
+    }
+    return null;
+  }
+
+  int? _readInt(dynamic value) {
+    if (value == null) return null;
+    if (value is int) return value;
+    if (value is double) return value.round();
+    if (value is String) {
+      final int? parsed = int.tryParse(value);
+      if (parsed != null) return parsed;
+    }
+    return null;
   }
 }

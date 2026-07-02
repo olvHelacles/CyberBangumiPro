@@ -9,6 +9,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter/material.dart';
 
 import 'package:cyberbangumi_pro/main.dart';
+import 'package:cyberbangumi_pro/models/broadcast_types.dart';
 
 /// 测试入口，验证主题映射与主界面基础渲染。
 void main() {
@@ -112,6 +113,6 @@ void main() {
 
     expect(find.text('今日更新'), findsOneWidget);
     expect(find.text('我的关注'), findsOneWidget);
-    expect(find.text('选择关注'), findsOneWidget);
+    expect(find.text('番剧搜索'), findsOneWidget);
   });
 }
