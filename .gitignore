@@ -54,3 +54,14 @@ app.*.map.json
 /android/
 /release/
 *.zip
+
+# Runtime generated files
+/cache.db
+/clash_config.yaml
+/sub_provider.yaml
+
+# Extracted clash binary (asset is tracked via LFS)
+/mihomo.exe
+
+# Clash core binary (bundled via pubspec.yaml assets, not tracked in git)
+/assets/mihomo.exe
