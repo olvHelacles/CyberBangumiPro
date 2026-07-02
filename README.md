@@ -1,86 +1,59 @@
 <img alt="Cover" src="./docs/imgs/logo.png" width = "512">
 
-CyberBangumi Pro 是一个简洁的基于 Flutter 的windows端番剧日历与追番辅助工具，聚焦以下目标：
+CyberBangumi Pro 是一个基于 Flutter 的 Windows 桌面端番剧日历与追番辅助工具。
 
-- 自动抓取 Bangumi 周历数据
-- 结合 BGMLIST OnAir JSON 补全放送时刻
-- 管理关注列表并刷新每部番剧的放送进度
-- 支持时区转换，便于按本地时区查看放送信息
+- 自动抓取当季番剧日历，支持时区转换
+- 番剧搜索与条目详情查看
+- 管理关注列表并刷新放送进度
+- 内建代理，解决 Bangumi API 网络可达性问题
 
-## 核心功能
-
-### 1. 日历抓取与时刻补全
-
-- 周历数据直接来自 BGMLIST OnAir API
-- 通过 BGMLIST 的 sites 字段直接提取 Bangumi 条目 ID，并解析放送星期与更新时间
-- 手动点击“刷新日历”时，会重新抓取 BGMLIST 数据并重建周历；若网络失败则回退本地 calendar_cache.json
-
-### 2. 界面内容
+## 界面
 
 <img alt="Gui" src="./docs/imgs/gui.png">
 
-- 今日更新：展示当天番剧，支持快速关注/取消关注
-- 我的关注：集中查看已关注番剧及进度
-- 番剧周历：按星期网格查看放送分布(精确放送时刻仅供参考)
-  - 点击番剧封面即可打开对应bangumi页面
-- 选择关注：筛选并批量保存关注对象
+四个主标签页：
 
-### 3. 进度刷新
+- **今日更新** — 当天放送番剧，快速关注/取消关注
+- **我的关注** — 已关注番剧及进度，支持手动修正
+- **番剧周历** — 按星期查看放送分布
+- **番剧搜索** — 搜索条目，分页翻页，按热度排序
 
-- 基于 Bangumi API 拉取分集与条目信息
-- 支持并发刷新，提高关注列表批量更新速度
-- 支持手动进度修正
+点击任意封面弹出详情面板，包含评分分布、制作信息、剧情简介、关注按钮等。
 
-### 4. 缓存与本地存储
+## 主要功能
 
-- 封面缓存目录：cover_cache/
-- 日历缓存文件：calendar_cache.json
-- 应用状态文件：app_state.json
-- 关注归档文件：watch_archive.json
+- **日历抓取** — 聚合 bgmlist.com archive 与 OnAir 双数据源，自动缓存
+- **进度追踪** — 基于 Bangumi API 拉取分集进度，支持并发批量刷新
+- **内建代理** — 集成 Clash (mihomo) 核心，支持订阅链接，自动测速选优
+- **封面缓存** — 封面走代理下载到本地后显示，浏览更流畅
+- **调试工具** — 日志窗口、调试星期、调试归档
+- **时区转换** — 默认 UTC+8，可在设置中调整
 
 ## 数据来源
 
-- Bangumi 日历页：https://bangumi.tv/calendar
-- Bangumi API：https://api.bgm.tv
-- BGMLIST OnAir API：https://bgmlist.com/api/v1/bangumi/onair
+- [Bangumi API](https://api.bgm.tv)
+- [BGMLIST Archive / OnAir](https://bgmlist.com)
 
-## 时区说明
-
-- 默认使用时区转换（默认 UTC+8）
-- 可在设置中开关时区转换并调整偏移
-- 日历缓存会绑定时区配置；配置变化后会自动重新抓取并重算显示结果
-
-## 运行与开发
-
-### 环境要求
-
-- Flutter SDK 3.10+
-- Dart SDK 3.10+
-- 建议在 Windows 桌面环境下运行与调试
-
-### 启动步骤
+## 运行
 
 ```bash
 flutter pub get
 flutter run -d windows
 ```
 
-如需在其他平台运行，可替换对应设备参数。
+Release 构建：`powershell -File build_release.ps1`，输出到 `release/` 目录。
 
-### 测试
+## 项目结构
 
-```bash
-flutter test test/widget_test.dart
 ```
-
-## 项目结构（简要）
-
-- lib/main.dart：主要业务逻辑与界面实现
-- test/widget_test.dart：基础行为测试
-- assets/images/：图标、Logo 等资源
-- assets/fonts/：字体资源
-
-
+lib/
+├── main.dart
+├── clash_manager.dart
+├── constants.dart
+├── models/
+├── services/
+└── stores/
+```
 
 <div align=center>
 <img alt="End" src="./docs/imgs/cover2.png" width=512>
