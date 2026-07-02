@@ -1,4 +1,4 @@
-# CyberBangumi Pro v0.4.2 项目实现与约定（单文件交接）
+# CyberBangumi Pro v0.5.0 项目实现与约定（单文件交接）
 
 本文件用于在新对话窗口中快速恢复项目上下文，覆盖当前实现、约定、数据结构和后续改动注意事项。
 
@@ -14,11 +14,14 @@
   - 支持手动修正进度并持久化。
   - 支持封面缓存、关注归档、调试工具。
   - 内建 Clash (mihomo) 代理，解决 Bangumi API 网络可达性问题。
+  - Bangumi API 条目搜索（番剧搜索 Tab）。
+  - 条目详情弹窗（评分分布柱状图、制作信息、简介）。
 
 ## 2. 运行与依赖
 
 - 关键依赖见 pubspec.yaml:
   - http, html, url_launcher, window_manager, flutter_svg
+- API 参考文档: docs/v0.yaml（Bangumi OpenAPI 规范）
 - Clash 核心: assets/mihomo.exe（v1.19.27，~45MB）
 - 运行前建议:
   1. flutter pub get
@@ -34,8 +37,9 @@
   - 今日更新
   - 我的关注
   - 番剧周历
-  - 选择关注
+  - 番剧搜索
 - AppBar 标题区为 Logo 图层方案，SVG 渲染。
+- 条目详情弹窗: showModalBottomSheet + DraggableScrollableSheet，展示评分分布柱状图、制作信息、可展开简介。
 
 ### 3.2 数据模型
 
@@ -43,6 +47,8 @@
 - DaySchedule: 周几 -> 条目列表。
 - SubjectProgress: 进度、评分、评论、每集标题映射等。
 - WatchArchiveEntry: 归档实体。
+- SearchSubjectResult: 搜索结果（SubjectItem + ratingScore + airDate + popularity）。
+- SearchSubjectsResponse: 搜索结果分页包装（total + results）。
 
 ### 3.3 存储与缓存组件
 
@@ -60,6 +66,9 @@
   - 半年番补充: bgmlist.com/api/v1/bangumi/onair（JSON API）。
   - 进度来源: Bangumi API。
   - isSubjectStillAiring(): 通过 Bangumi API 分集进度判断番剧是否在播。
+  - searchSubjects(): POST /v0/search/subjects，支持关键词搜索+type过滤+limit/offset分页+sort排序。
+  - fetchSubjectFromApi(): GET /v0/subjects/{id} 获取完整条目 JSON。
+  - fetchImageWithRetry(): 走代理的图片下载（用于封面缓存）。
 
 - ClashManager（lib/clash_manager.dart）:
   - 管理 mihomo 进程生命周期。
@@ -105,7 +114,33 @@ _calendarCacheManager.save()        →  持久化
 _applyScheduleData()                →  UI 刷新
 ```
 
-### 4.5 代理设置
+### 4.4 番剧搜索流程
+
+```
+用户输入关键词 → 点击搜索/按回车
+  → _performSearch(keyword)
+  → _service.searchSubjects(keyword, type:2) POST /v0/search/subjects
+  → 分页抓取 → 去重 → 按热度(popularity)排序
+  → 展示搜索结果（每页 10 条，支持翻页）
+  → 后台缓存封面（通过 BangumiService 走代理下载）
+```
+
+### 4.5 条目详情弹窗流程
+
+```
+点击封面/标题
+  → _showSubjectDetail(item)
+  → showModalBottomSheet + DraggableScrollableSheet
+  → _loadData():
+      → fetchSubjectFromApi(subjectId) 获取完整 JSON
+      → coverCacheManager.ensureCached() 缓存封面
+      → setState() 展示数据
+  → 内容: 标题、封面(右侧)、评分分布柱状图(右侧封面下方)、
+          信息徽章、类型标签、制作信息、简介(可展开+复制)、
+          关注按钮、在浏览器中打开
+```
+
+### 4.6 代理设置
 
 设置面板包含:
 - Clash 状态行：当前节点名 + 延迟 + 重启按钮
@@ -119,10 +154,12 @@ _applyScheduleData()                →  UI 刷新
 4. `health-check` 每 5 分钟检测节点可用性
 5. 所有 HTTP 请求走 `HttpClient.findProxy` → 127.0.0.1:7890
 
-### 4.6 周历展示
+### 4.7 封面加载机制
 
-- _weekCalendarShowAll 开关: false: 仅已关注 / true: 当期全部。
-- 横向滚动展示周一到周日列。
+- Image.network 不走 Clash 代理 → lain.bgm.tv 直连超时。
+- 解决方案：通过 BangumiService.fetchImageWithRetry（走代理）下载 → CoverCacheManager.ensureCached 存本地 → Image.file 显示。
+- 搜索 Tab: _cacheSearchResultCovers() 串行下载，每张完成即 setState 实时刷出。
+- 其他 Tab: applyRealtimeUpdate() 在封面缓存完成后触发重建。
 
 ## 5. 持久化结构约定
 
@@ -155,6 +192,7 @@ app_settings_v1 字段（完整）:
 4. 修改关注/周历逻辑时保证 _scheduleData 与缓存回填一致。
 5. mihomo.exe 在首次运行时从 Flutter assets 提取到工作目录。
 6. 窗口关闭时同步调用 ClashManager.kill() 终止 mihomo 进程，不等待。
+7. 封面通过代理下载到本地后以 Image.file 显示，不使用 Image.network。
 
 ## 7. 调试能力
 
@@ -162,19 +200,14 @@ app_settings_v1 字段（完整）:
 - 调试今日星期
 - 调试归档
 
-## 8. 近期改动焦点（v0.4.2）
+## 8. 近期改动焦点（v0.5.0）
 
-- 数据源: bangumi.tv/calendar → bgmlist.com/archive (HTML) + OnAir API (JSON)。
-- 内建 Clash 代理: 新增 ClashManager 管理 mihomo 进程。
-- 订阅链接: 设置面板支持输入 Clash 订阅 URL，自动生成含 proxy-providers + url-test 的配置。
-- 节点显示: 通过 Clash REST API (57737) 实时显示节点名和延迟。
-- 半年番补充: 基于 OnAir API + Bangumi API 进度验证收录跨季番剧。
-- 代理设置: 合并 Clash 状态/订阅/开关为一个分组，去掉手动 host/port/bypass。
-- 默认代理: defaultSettingProxyEnabled = true。
-- 修复: BangumiService 构造函数未应用代理的问题。
-- 修复: 订阅 URL 变更检测比较时序错误。
-- 修复: 窗口关闭卡死（移除 setPreventClose，改用同步 kill）。
-- Release: build_release.ps1 更新，不携带 app_state.json，首次启动以默认值运行。
+- 番剧搜索: 新增 Tab 4，调用 POST /v0/search/subjects 搜索 Bangumi 条目，支持按热度排序、分页翻页、关注切换。
+- 条目详情弹窗: 点击封面/标题弹出，展示评分分布柱状图(1-10星)、信息徽章、类型标签、制作信息、可展开简介(含复制按钮)、关注按钮。
+- 封面加载重构: 所有 Tab 封面改为通过 BangumiService 代理下载 + CoverCacheManager 本地缓存 + Image.file 显示，解决 Image.network 不走代理的问题。
+- 实时刷出: 每张封面下载完成后通过 setState + applyRealtimeUpdate 立即显示，无需重启。
+- 代码拆分: main.dart 拆分为分层架构(models/stores/services/widgets)。
+- API 文档: 新增 docs/v0.yaml 作为开发参考。
 
 ## 9. 后续改动清单
 
@@ -183,6 +216,7 @@ app_settings_v1 字段（完整）:
 3. 修改周历来源时，检查 _enrichWithOnAirShows 与 parseDailySchedule 的一致性。
 4. 修改网络头时，确认 API 与页面抓取 UA 的隔离未被破坏。
 5. 提交前至少执行 flutter analyze 与目标测试。
+6. 修改搜索相关逻辑时，注意 BangumiService.searchSubjects 的 limit 为 query parameter 而非 body field。
 
 ## 10. 新会话接力模板
 
