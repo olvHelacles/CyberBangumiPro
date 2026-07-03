@@ -41,6 +41,28 @@ class _SearchTabState extends State<SearchTab> {
   bool _isSearching = false;
   String _searchError = '';
 
+  // Filter state.
+  int? _filterYearFrom;
+  int? _filterYearTo;
+  double? _filterMinRating;
+  int? _filterMinRatingCount;
+  List<String> _filterTags = <String>[];
+  String? _filterRegion;
+  String? _filterCategory;
+
+  bool _browseMode = false;
+  String _sortBy = 'heat';
+
+  String get _sortLabel {
+    switch (_sortBy) {
+      case 'score':
+        return '评分';
+      case 'heat':
+      default:
+        return '收藏数';
+    }
+  }
+
   @override
   void dispose() {
     _searchController.dispose();
@@ -92,8 +114,542 @@ class _SearchTabState extends State<SearchTab> {
     return sorted;
   }
 
+  bool get _hasActiveFilters =>
+      _filterYearFrom != null ||
+      _filterYearTo != null ||
+      _filterMinRating != null ||
+      _filterMinRatingCount != null ||
+      _filterTags.isNotEmpty ||
+      _filterRegion != null ||
+      _filterCategory != null;
+
+  List<String>? _buildMetaTags() {
+    final List<String> tags = <String>[
+      ..._filterTags,
+      if (_filterRegion != null) _filterRegion!,
+      if (_filterCategory != null) _filterCategory!,
+    ];
+    return tags.isNotEmpty ? tags : null;
+  }
+
+  Future<void> _clearFilters() async {
+    setState(() {
+      _filterYearFrom = null;
+      _filterYearTo = null;
+      _filterMinRating = null;
+      _filterMinRatingCount = null;
+      _filterTags = <String>[];
+      _filterRegion = null;
+      _filterCategory = null;
+    });
+    await _triggerSearch();
+  }
+
+  Future<void> _triggerSearch() async {
+    final String kw = _searchController.text.trim();
+    if (_browseMode || kw.isNotEmpty || _hasActiveFilters) {
+      await _performSearch(kw);
+    }
+  }
+
+  String _buildYearLabel() {
+    if (_filterYearFrom != null && _filterYearTo != null) {
+      return '${_filterYearFrom}-$_filterYearTo';
+    }
+    if (_filterYearFrom != null) return '$_filterYearFrom年起';
+    if (_filterYearTo != null) return '$_filterYearTo年前';
+    return '年份不限';
+  }
+
+  Widget _filterChip({
+    required IconData icon,
+    required String label,
+    required VoidCallback onTap,
+  }) {
+    return ActionChip(
+      avatar: Icon(icon, size: 14),
+      label: Text(label, style: const TextStyle(fontSize: 12)),
+      onPressed: onTap,
+      visualDensity: VisualDensity.compact,
+      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      padding: const EdgeInsets.symmetric(horizontal: 4),
+    );
+  }
+
+  Future<void> _showYearRangePicker() async {
+    final List<int> years = <int>[
+      for (int y = 2026; y >= 2000; y--) y,
+    ];
+    final List<int?>? result = await showDialog<List<int?>>(
+      context: context,
+      builder: (BuildContext context) {
+        int? from = _filterYearFrom;
+        int? to = _filterYearTo;
+        return StatefulBuilder(
+          builder: (BuildContext context, StateSetter setLocalState) {
+            return AlertDialog(
+              title: const Text('播出年份范围'),
+              content: SizedBox(
+                width: 300,
+                child: Row(
+                  children: <Widget>[
+                    Expanded(
+                      child: DropdownButtonFormField<int?>(
+                        value: from,
+                        decoration: const InputDecoration(
+                          labelText: '从',
+                          border: OutlineInputBorder(),
+                          isDense: true,
+                        ),
+                        items: <DropdownMenuItem<int?>>[
+                          const DropdownMenuItem<int?>(
+                            value: null, child: Text('不限'),
+                          ),
+                          for (final int y in years)
+                            DropdownMenuItem<int?>(
+                              value: y, child: Text('$y年'),
+                            ),
+                        ],
+                        onChanged: (int? v) =>
+                            setLocalState(() => from = v),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: DropdownButtonFormField<int?>(
+                        value: to,
+                        decoration: const InputDecoration(
+                          labelText: '到',
+                          border: OutlineInputBorder(),
+                          isDense: true,
+                        ),
+                        items: <DropdownMenuItem<int?>>[
+                          const DropdownMenuItem<int?>(
+                            value: null, child: Text('不限'),
+                          ),
+                          for (final int y in years)
+                            DropdownMenuItem<int?>(
+                              value: y, child: Text('$y年'),
+                            ),
+                        ],
+                        onChanged: (int? v) =>
+                            setLocalState(() => to = v),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              actions: <Widget>[
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  child: const Text('取消'),
+                ),
+                FilledButton(
+                  onPressed: () =>
+                      Navigator.of(context).pop(<int?>[from, to]),
+                  child: const Text('应用'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+    if (result == null) return;
+    setState(() {
+      _filterYearFrom = result[0];
+      _filterYearTo = result[1];
+    });
+    await _triggerSearch();
+  }
+
+  Future<void> _showRatingPicker() async {
+    const List<double?> ratingOptions = <double?>[
+      null, 6, 7, 8, 9,
+    ];
+    const List<String> ratingLabels = <String>[
+      '不限', '≥ 6', '≥ 7', '≥ 8', '≥ 9',
+    ];
+    const List<int?> countOptions = <int?>[
+      null, 100, 500, 1000, 5000, 10000,
+    ];
+    const List<String> countLabels = <String>[
+      '不限', '≥ 100', '≥ 500', '≥ 1000', '≥ 5000', '≥ 10000',
+    ];
+
+    double? pickRating = _filterMinRating;
+    int? pickCount = _filterMinRatingCount;
+
+    final bool? confirmed = await showDialog<bool>(
+      context: context,
+      builder: (BuildContext context) {
+        int ratingIndex = ratingOptions.indexOf(_filterMinRating);
+        if (ratingIndex < 0) ratingIndex = 0;
+        int countIndex = countOptions.indexOf(_filterMinRatingCount);
+        if (countIndex < 0) countIndex = 0;
+        return StatefulBuilder(
+          builder: (BuildContext context, StateSetter setLocalState) {
+            return AlertDialog(
+              title: const Text('评分 & 评分人数'),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: <Widget>[
+                  const Text('最低评分',
+                      style: TextStyle(
+                          fontSize: 12, fontWeight: FontWeight.w600)),
+                  const SizedBox(height: 4),
+                  Wrap(
+                    spacing: 4,
+                    children: List<Widget>.generate(
+                        ratingOptions.length, (int i) {
+                      final bool selected = ratingIndex == i;
+                      return ChoiceChip(
+                        label: Text(ratingLabels[i],
+                            style: const TextStyle(fontSize: 11)),
+                        selected: selected,
+                        onSelected: (_) =>
+                            setLocalState(() => ratingIndex = i),
+                        visualDensity: VisualDensity.compact,
+                        labelPadding:
+                            const EdgeInsets.symmetric(horizontal: 6),
+                      );
+                    }),
+                  ),
+                  const SizedBox(height: 12),
+                  const Text('评分人数',
+                      style: TextStyle(
+                          fontSize: 12, fontWeight: FontWeight.w600)),
+                  const SizedBox(height: 4),
+                  Wrap(
+                    spacing: 4,
+                    children: List<Widget>.generate(
+                        countOptions.length, (int i) {
+                      final bool selected = countIndex == i;
+                      return ChoiceChip(
+                        label: Text(countLabels[i],
+                            style: const TextStyle(fontSize: 11)),
+                        selected: selected,
+                        onSelected: (_) =>
+                            setLocalState(() => countIndex = i),
+                        visualDensity: VisualDensity.compact,
+                        labelPadding:
+                            const EdgeInsets.symmetric(horizontal: 6),
+                      );
+                    }),
+                  ),
+                ],
+              ),
+              actions: <Widget>[
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(false),
+                  child: const Text('取消'),
+                ),
+                FilledButton(
+                  onPressed: () {
+                    pickRating = ratingOptions[ratingIndex];
+                    pickCount = countOptions[countIndex];
+                    Navigator.of(context).pop(true);
+                  },
+                  child: const Text('应用'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+    if (confirmed != true) return;
+    if (pickRating == _filterMinRating && pickCount == _filterMinRatingCount) {
+      return;
+    }
+    setState(() {
+      _filterMinRating = pickRating;
+      _filterMinRatingCount = pickCount;
+    });
+    await _triggerSearch();
+  }
+
+  Future<void> _showTagEditor() async {
+    const List<String> commonTags = <String>[
+      '科幻', '喜剧', '同人', '百合', '校园', '惊悚', '后宫', '机战',
+      '悬疑', '恋爱', '奇幻', '推理', '运动', '耽美', '音乐', '战斗',
+      '冒险', '萌系', '穿越', '玄幻', '乙女', '恐怖', '历史', '日常',
+      '剧情', '武侠', '美食', '职场',
+    ];
+    final TextEditingController tagController = TextEditingController();
+    final List<String> currentTags = List<String>.from(_filterTags);
+    final result = await showDialog<List<String>>(
+      context: context,
+      builder: (BuildContext context) {
+        return StatefulBuilder(
+          builder: (BuildContext context, StateSetter setLocalState) {
+            return AlertDialog(
+              title: const Text('标签筛选'),
+              content: SizedBox(
+                width: 380,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: <Widget>[
+                    TextField(
+                      controller: tagController,
+                      decoration: InputDecoration(
+                        labelText: '输入标签后按回车添加',
+                        border: const OutlineInputBorder(),
+                        isDense: true,
+                        suffixIcon: IconButton(
+                          icon: const Icon(Icons.add, size: 18),
+                          onPressed: () {
+                            final String t =
+                                tagController.text.trim();
+                            if (t.isNotEmpty &&
+                                !currentTags.contains(t)) {
+                              setLocalState(() {
+                                currentTags.add(t);
+                                tagController.clear();
+                              });
+                            }
+                          },
+                        ),
+                      ),
+                      onSubmitted: (String value) {
+                        final String t = value.trim();
+                        if (t.isNotEmpty && !currentTags.contains(t)) {
+                          setLocalState(() {
+                            currentTags.add(t);
+                            tagController.clear();
+                          });
+                        }
+                      },
+                    ),
+                    const SizedBox(height: 8),
+                    const Text('常用标签',
+                        style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600)),
+                    const SizedBox(height: 4),
+                    Wrap(
+                      spacing: 4,
+                      runSpacing: 2,
+                      children: commonTags.map((String tag) {
+                        final bool selected =
+                            currentTags.contains(tag);
+                        return ChoiceChip(
+                          label: Text(tag,
+                              style: const TextStyle(fontSize: 11)),
+                          selected: selected,
+                          onSelected: (bool value) {
+                            setLocalState(() {
+                              if (value) {
+                                currentTags.add(tag);
+                              } else {
+                                currentTags.remove(tag);
+                              }
+                            });
+                          },
+                          visualDensity: VisualDensity.compact,
+                          labelPadding: const EdgeInsets.symmetric(
+                              horizontal: 6),
+                          materialTapTargetSize:
+                              MaterialTapTargetSize.shrinkWrap,
+                        );
+                      }).toList(),
+                    ),
+                  ],
+                ),
+              ),
+              actions: <Widget>[
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  child: const Text('取消'),
+                ),
+                FilledButton(
+                  onPressed: () =>
+                      Navigator.of(context).pop(currentTags),
+                  child: const Text('应用'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+    if (result == null) return;
+    setState(() => _filterTags = result);
+    await _triggerSearch();
+  }
+
+  Future<void> _showRegionPicker() async {
+    const List<String?> options = <String?>[
+      null, '日本', '中国', '韩国', '美国', '英国', '法国', '其他',
+    ];
+    const List<String> labels = <String>[
+      '不限', '日本', '中国', '韩国', '美国', '英国', '法国', '其他',
+    ];
+    int selectedIndex = options.indexOf(_filterRegion);
+    if (selectedIndex < 0) selectedIndex = 0;
+    final String? result = await showDialog<String>(
+      context: context,
+      builder: (BuildContext context) {
+        return StatefulBuilder(
+          builder: (BuildContext context, StateSetter setLocalState) {
+            return AlertDialog(
+              title: const Text('地区'),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: List<Widget>.generate(options.length, (int i) {
+                  final bool selected = selectedIndex == i;
+                  return ListTile(
+                    title: Text(labels[i]),
+                    leading: Icon(
+                      selected
+                          ? Icons.radio_button_checked
+                          : Icons.radio_button_unchecked,
+                      color: selected
+                          ? Theme.of(context).colorScheme.primary
+                          : null,
+                    ),
+                    onTap: () =>
+                        setLocalState(() => selectedIndex = i),
+                    dense: true,
+                  );
+                }),
+              ),
+              actions: <Widget>[
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  child: const Text('取消'),
+                ),
+                FilledButton(
+                  onPressed: () =>
+                      Navigator.of(context).pop(options[selectedIndex]),
+                  child: const Text('应用'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+    if (result == _filterRegion) return;
+    setState(() => _filterRegion = result);
+    await _triggerSearch();
+  }
+
+  Future<void> _showCategoryPicker() async {
+    const List<String?> options = <String?>[
+      null, 'TV', 'WEB', 'OVA', '剧场版', '动态漫画', '其他',
+    ];
+    const List<String> labels = <String>[
+      '不限', 'TV', 'WEB', 'OVA', '剧场版', '动态漫画', '其他',
+    ];
+    int selectedIndex = options.indexOf(_filterCategory);
+    if (selectedIndex < 0) selectedIndex = 0;
+    final String? result = await showDialog<String>(
+      context: context,
+      builder: (BuildContext context) {
+        return StatefulBuilder(
+          builder: (BuildContext context, StateSetter setLocalState) {
+            return AlertDialog(
+              title: const Text('分类'),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: List<Widget>.generate(options.length, (int i) {
+                  final bool selected = selectedIndex == i;
+                  return ListTile(
+                    title: Text(labels[i]),
+                    leading: Icon(
+                      selected
+                          ? Icons.radio_button_checked
+                          : Icons.radio_button_unchecked,
+                      color: selected
+                          ? Theme.of(context).colorScheme.primary
+                          : null,
+                    ),
+                    onTap: () =>
+                        setLocalState(() => selectedIndex = i),
+                    dense: true,
+                  );
+                }),
+              ),
+              actions: <Widget>[
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  child: const Text('取消'),
+                ),
+                FilledButton(
+                  onPressed: () =>
+                      Navigator.of(context).pop(options[selectedIndex]),
+                  child: const Text('应用'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+    if (result == _filterCategory) return;
+    setState(() => _filterCategory = result);
+    await _triggerSearch();
+  }
+
+  Future<void> _showSortPicker() async {
+    const List<String> options = <String>['heat', 'score'];
+    const List<String> labels = <String>['收藏数', '评分'];
+    int selectedIndex = options.indexOf(_sortBy);
+    if (selectedIndex < 0) selectedIndex = 0;
+    final String? result = await showDialog<String>(
+      context: context,
+      builder: (BuildContext context) {
+        return StatefulBuilder(
+          builder: (BuildContext context, StateSetter setLocalState) {
+            return AlertDialog(
+              title: const Text('排序依据'),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: List<Widget>.generate(options.length, (int i) {
+                  final bool selected = selectedIndex == i;
+                  return ListTile(
+                    title: Text(labels[i]),
+                    leading: Icon(
+                      selected
+                          ? Icons.radio_button_checked
+                          : Icons.radio_button_unchecked,
+                      color: selected
+                          ? Theme.of(context).colorScheme.primary
+                          : null,
+                    ),
+                    onTap: () => setLocalState(() => selectedIndex = i),
+                    dense: true,
+                  );
+                }),
+              ),
+              actions: <Widget>[
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  child: const Text('取消'),
+                ),
+                FilledButton(
+                  onPressed: () =>
+                      Navigator.of(context).pop(options[selectedIndex]),
+                  child: const Text('应用'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+    if (result == null || result == _sortBy) return;
+    setState(() => _sortBy = result);
+    await _triggerSearch();
+  }
+
   Future<void> _performSearch(String keyword) async {
-    if (keyword.trim().isEmpty) return;
+    final String kw = keyword.trim();
+    final bool useWildcard = _browseMode || (kw.isEmpty && _hasActiveFilters);
+    if (kw.isEmpty && !useWildcard) return;
     setState(() {
       _isSearching = true;
       _searchError = '';
@@ -104,9 +660,15 @@ class _SearchTabState extends State<SearchTab> {
 
     try {
       final SearchSubjectsResponse response = await widget.service.searchSubjects(
-        keyword,
+        useWildcard ? '*' : keyword,
+        sort: _sortBy,
         limit: _pageSize,
         offset: 0,
+        airDateYearFrom: _filterYearFrom,
+        airDateYearTo: _filterYearTo,
+        minRating: _filterMinRating,
+        minRatingCount: _filterMinRatingCount,
+        tags: _buildMetaTags(),
       );
 
       if (!mounted) return;
@@ -132,7 +694,8 @@ class _SearchTabState extends State<SearchTab> {
 
   Future<void> _navigateSearchPage(int page) async {
     final String keyword = _searchController.text.trim();
-    if (keyword.isEmpty) return;
+    final bool useWildcard = _browseMode || (keyword.isEmpty && _hasActiveFilters);
+    if (keyword.isEmpty && !useWildcard) return;
 
     setState(() {
       _isSearching = true;
@@ -142,9 +705,15 @@ class _SearchTabState extends State<SearchTab> {
     try {
       final int offset = page * _pageSize;
       final SearchSubjectsResponse response = await widget.service.searchSubjects(
-        keyword,
+        useWildcard ? '*' : keyword,
+        sort: _sortBy,
         limit: _pageSize,
         offset: offset,
+        airDateYearFrom: _filterYearFrom,
+        airDateYearTo: _filterYearTo,
+        minRating: _filterMinRating,
+        minRatingCount: _filterMinRatingCount,
+        tags: _buildMetaTags(),
       );
 
       if (!mounted) return;
@@ -365,8 +934,10 @@ class _SearchTabState extends State<SearchTab> {
 
     return Column(
       children: <Widget>[
-        Padding(
-          padding: const EdgeInsets.fromLTRB(12, 12, 12, 6),
+        // Browse mode toggle
+        if (!_browseMode)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 12, 12, 6),
           child: TextField(
             controller: _searchController,
             textInputAction: TextInputAction.search,
@@ -381,7 +952,7 @@ class _SearchTabState extends State<SearchTab> {
               border: const OutlineInputBorder(),
             ),
             onChanged: (value) {
-              if (value.trim().isEmpty) {
+              if (value.trim().isEmpty && !_hasActiveFilters) {
                 setState(() {
                   _allSearchResults = <SearchSubjectResult>[];
                   _searchTotalResults = 0;
@@ -391,8 +962,114 @@ class _SearchTabState extends State<SearchTab> {
               }
             },
             onSubmitted: (value) {
-              if (value.trim().isNotEmpty) _performSearch(value.trim());
+              final String kw = value.trim();
+              if (kw.isNotEmpty || _hasActiveFilters) _performSearch(kw);
             },
+          ),
+        ),
+        // Filter bar + sort + mode toggle
+        Padding(
+          padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
+          child: Row(
+            children: <Widget>[
+              Expanded(
+                child: SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: Row(
+                    children: <Widget>[
+                      _filterChip(
+                        icon: Icons.category,
+                        label: _filterCategory ?? '分类不限',
+                        onTap: _showCategoryPicker,
+                      ),
+                      const SizedBox(width: 8),
+                      _filterChip(
+                        icon: Icons.language,
+                        label: _filterRegion ?? '地区不限',
+                        onTap: _showRegionPicker,
+                      ),
+                      const SizedBox(width: 8),
+                      _filterChip(
+                        icon: Icons.calendar_today,
+                        label: _buildYearLabel(),
+                        onTap: _showYearRangePicker,
+                      ),
+                      const SizedBox(width: 8),
+                      _filterChip(
+                        icon: Icons.star,
+                        label: _filterMinRating != null
+                            ? '≥ $_filterMinRating${_filterMinRatingCount != null ? ", ≥$_filterMinRatingCount人" : ""}'
+                            : _filterMinRatingCount != null
+                                ? '≥$_filterMinRatingCount人'
+                                : '评分不限',
+                        onTap: _showRatingPicker,
+                      ),
+                      const SizedBox(width: 8),
+                      _filterChip(
+                        icon: Icons.label,
+                        label: _filterTags.isEmpty
+                            ? '标签不限'
+                            : _filterTags.join(', '),
+                        onTap: _showTagEditor,
+                      ),
+                      if (_hasActiveFilters) ...[
+                        const SizedBox(width: 4),
+                        TextButton.icon(
+                          icon: const Icon(Icons.clear, size: 16),
+                          label: const Text('清除', style: TextStyle(fontSize: 12)),
+                          onPressed: _clearFilters,
+                          style: TextButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 8, vertical: 2),
+                            minimumSize: Size.zero,
+                            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                            visualDensity: VisualDensity.compact,
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+              ),
+              if (_browseMode) ...[
+                ActionChip(
+                  avatar: const Icon(Icons.sort, size: 14),
+                  label: Text(_sortLabel,
+                      style: const TextStyle(fontSize: 12)),
+                  onPressed: _showSortPicker,
+                  visualDensity: VisualDensity.compact,
+                  materialTapTargetSize:
+                      MaterialTapTargetSize.shrinkWrap,
+                  padding: const EdgeInsets.symmetric(horizontal: 4),
+                ),
+                const SizedBox(width: 4),
+              ],
+              SegmentedButton<bool>(
+                segments: const <ButtonSegment<bool>>[
+                  ButtonSegment<bool>(value: true, label: Text('浏览', style: TextStyle(fontSize: 11))),
+                  ButtonSegment<bool>(value: false, label: Text('搜索', style: TextStyle(fontSize: 11))),
+                ],
+                selected: <bool>{_browseMode},
+                onSelectionChanged: (Set<bool> selected) {
+                  final bool v = selected.first;
+                  setState(() {
+                    _browseMode = v;
+                    if (v) {
+                      _filterCategory ??= 'TV';
+                      _filterRegion ??= '日本';
+                      _filterMinRatingCount ??= 100;
+                    }
+                  });
+                  if (v) _performSearch('');
+                },
+                style: ButtonStyle(
+                  visualDensity: VisualDensity.compact,
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  padding: WidgetStatePropertyAll(
+                      EdgeInsets.symmetric(horizontal: 6)),
+                ),
+              ),
+            ],
           ),
         ),
         if (!_isSearching &&

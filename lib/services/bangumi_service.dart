@@ -1123,10 +1123,22 @@ Future<String> _getWithRetry(
   }
 
   /// Search Bangumi subjects by keyword. Returns up to 10 anime entries.
+  ///
+  /// [airDateYearFrom] / [airDateYearTo] — filter by air date year range,
+  ///   e.g. from=2020, to=2025 → 2020‑01‑01 ≤ airdate < 2026‑01‑01.
+  /// [minRating] — minimum rating threshold, e.g. 7 → rating ≥ 7.
+  /// [minRatingCount] — minimum rating count, e.g. 1000 → rating_count ≥ 1000.
+  /// [tags] — public meta_tags filter (AND logic, prefix `-` to exclude).
   Future<SearchSubjectsResponse> searchSubjects(
     String keyword, {
     int limit = 10,
     int offset = 0,
+    String? sort,
+    int? airDateYearFrom,
+    int? airDateYearTo,
+    double? minRating,
+    int? minRatingCount,
+    List<String>? tags,
   }) async {
     if (keyword.trim().isEmpty) {
       return SearchSubjectsResponse(total: 0, results: <SearchSubjectResult>[]);
@@ -1136,16 +1148,37 @@ Future<String> _getWithRetry(
       _apiRequestHeaders,
     )..['Content-Type'] = 'application/json';
 
+    final Map<String, dynamic> filter = <String, dynamic>{
+      'type': <int>[2],
+    };
+    if (airDateYearFrom != null || airDateYearTo != null) {
+      final List<String> airDate = <String>[];
+      if (airDateYearFrom != null) {
+        airDate.add('>=${airDateYearFrom}-01-01');
+      }
+      if (airDateYearTo != null) {
+        airDate.add('<${airDateYearTo + 1}-01-01');
+      }
+      filter['air_date'] = airDate;
+    }
+    if (minRating != null) {
+      filter['rating'] = <String>['>=${minRating.toStringAsFixed(0)}'];
+    }
+    if (minRatingCount != null) {
+      filter['rating_count'] = <String>['>=$minRatingCount'];
+    }
+    if (tags != null && tags.isNotEmpty) {
+      filter['meta_tags'] = tags;
+    }
+
     final String body = await _postWithRetry(
       '$bangumiApiBaseUrl/v0/search/subjects?limit=${limit.clamp(1, 20)}&offset=$offset',
       purpose: '搜索番剧条目',
       headers: headers,
       body: <String, dynamic>{
         'keyword': keyword,
-        'sort': 'heat',
-        'filter': <String, dynamic>{
-          'type': <int>[2],
-        },
+        'sort': sort ?? 'heat',
+        'filter': filter,
       },
     );
 

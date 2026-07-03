@@ -2313,7 +2313,7 @@ class _BangumiHomePageState extends State<BangumiHomePage>
       }
       // Skip items not in the current calendar (completed/补番) unless explicitly requested.
       if (allowedIds == null && !calendarIds.contains(item.subjectId)) {
-        continue;
+        // 补番条目：仍然加入 targets，processOne 会走轻量路径（仅抓评分）
       }
       watchTargets[item.subjectId] = item;
     }
@@ -2447,19 +2447,48 @@ class _BangumiHomePageState extends State<BangumiHomePage>
       if (item.subjectUrl.isEmpty) {
         rawProgress = const SubjectProgress(error: '缺少 subject_url');
       } else {
-        try {
-          _appendDebugLog('网络: 开始抓取[进度] ${item.subjectUrl} (subjectId=$sid)');
-          final BroadcastScheduleHint? hint = scheduleHintsBySubjectId[sid];
-          rawProgress = await _service.fetchSubjectProgress(
-            item.subjectUrl,
-            scheduleTime: hint?.time ?? '',
-            scheduleWeekday: hint?.weekday ?? '',
-            displayTimezoneOffsetMinutes:
-                _effectiveDisplayTimezoneOffsetMinutes,
-          );
-        } catch (e) {
-          _appendDebugLog('网络: 抓取失败[进度] ${item.subjectUrl} ($e)');
-          rawProgress = SubjectProgress(error: e.toString());
+        final bool isCatchUp = !calendarIds.contains(sid);
+        if (isCatchUp) {
+          // 补番条目：仅抓评分，不拉分集/评论
+          try {
+            final Map<String, dynamic>? subject =
+                await _service.fetchSubjectFromApi(sid);
+            if (subject != null) {
+              final dynamic ratingRaw = subject['rating'];
+              double? ratingScore;
+              if (ratingRaw is Map<String, dynamic>) {
+                ratingScore = readJsonDouble(ratingRaw['score']);
+              }
+              final int? totalEps = readJsonInt(subject['total_episodes']) ??
+                  readJsonInt(subject['eps']);
+              rawProgress = SubjectProgress(
+                ratingScore: ratingScore,
+                totalEpsDeclared: totalEps,
+                progressText:
+                    totalEps != null ? '?/$totalEps' : null,
+              );
+            } else {
+              rawProgress = const SubjectProgress(error: '获取条目信息失败');
+            }
+          } catch (e) {
+            _appendDebugLog('网络: 抓取失败[补番评分] $sid ($e)');
+            rawProgress = SubjectProgress(error: e.toString());
+          }
+        } else {
+          try {
+            _appendDebugLog('网络: 开始抓取[进度] ${item.subjectUrl} (subjectId=$sid)');
+            final BroadcastScheduleHint? hint = scheduleHintsBySubjectId[sid];
+            rawProgress = await _service.fetchSubjectProgress(
+              item.subjectUrl,
+              scheduleTime: hint?.time ?? '',
+              scheduleWeekday: hint?.weekday ?? '',
+              displayTimezoneOffsetMinutes:
+                  _effectiveDisplayTimezoneOffsetMinutes,
+            );
+          } catch (e) {
+            _appendDebugLog('网络: 抓取失败[进度] ${item.subjectUrl} ($e)');
+            rawProgress = SubjectProgress(error: e.toString());
+          }
         }
       }
 
