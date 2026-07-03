@@ -1,4 +1,4 @@
-# CyberBangumi Pro v0.6.0 项目实现与约定（单文件交接）
+# CyberBangumi Pro v0.6.1 项目实现与约定（单文件交接）
 
 本文件用于在新对话窗口中快速恢复项目上下文，覆盖当前实现、约定、数据结构和后续改动注意事项。
 
@@ -193,6 +193,7 @@ app_settings_v1 字段（完整）:
 5. mihomo.exe 在首次运行时从 Flutter assets 提取到工作目录。
 6. 窗口关闭时同步调用 ClashManager.kill() 终止 mihomo 进程，不等待。
 7. 封面通过代理下载到本地后以 Image.file 显示，不使用 Image.network。
+8. **新功能隔离**：新功能（除非涉及核心状态/业务逻辑的深度改动）优先在 `lib/widgets/` 或 `lib/services/` 中实现，避免扩充 `lib/main.dart`。仅当改动直接涉及 `_BangumiHomePageState` 的核心状态字段（~60 个）或跨 Tab 的共享方法（如日历刷新、进度刷新、持久化）时才在 `lib/main.dart` 中添加代码。
 
 ## 7. 调试能力
 

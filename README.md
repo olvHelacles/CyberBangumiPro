@@ -18,8 +18,6 @@ CyberBangumi Pro 是一个基于 Flutter 的 Windows 桌面端番剧日历与追
 - **番剧周历** — 按星期查看放送分布
 - **番剧搜索** — 搜索条目，分页翻页，按热度排序
 
-<img alt="Gui2" src="./docs/imgs/ui_detail-page.png">
-
 点击任意封面弹出详情面板，包含评分分布、制作信息、剧情简介、关注按钮等。
 
 ## 主要功能
