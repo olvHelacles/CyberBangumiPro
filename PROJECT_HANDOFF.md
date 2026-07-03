@@ -1,4 +1,4 @@
-# CyberBangumi Pro v0.5.0 项目实现与约定（单文件交接）
+# CyberBangumi Pro v0.6.0 项目实现与约定（单文件交接）
 
 本文件用于在新对话窗口中快速恢复项目上下文，覆盖当前实现、约定、数据结构和后续改动注意事项。
 
@@ -227,3 +227,9 @@ app_settings_v1 字段（完整）:
 3. 手动修正进度逻辑不得回退。
 4. 修改代理/Clash 逻辑时保证 ClashManager 生命周期与 app 一致。
 5. 窗口关闭时必须同步终止 mihomo 进程（ClashManager.kill()）。
+
+## 11. Release 构建
+
+- 运行 `powershell -File build_release.ps1` 自动完成构建 + 打包 ZIP。
+- 输出: `release\cyberbangumi_pro-v{version}-windows-x64.zip`。
+- 构建过程中自动清理运行时文件（app_state.json 等），首次启动以默认值运行。

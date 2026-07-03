@@ -14,6 +14,13 @@ import '../models/broadcast_types.dart';
 import '../models/subject_item.dart';
 import '../models/subject_progress.dart';
 
+/// Cache entry for the isSubjectStillAiring check.
+class _AiringCacheEntry {
+  final bool result;
+  final DateTime cachedAt;
+  _AiringCacheEntry(this.result, this.cachedAt);
+}
+
 /// 统一网络服务层：日历抓取、Bangumi API 进度查询、封面获取
 class BangumiService {
   BangumiService({http.Client? client})
@@ -57,6 +64,10 @@ class BangumiService {
   bool? _apiAvailableCache;
   DateTime? _apiAvailableCheckedAt;
   void Function(String message)? onNetworkLog;
+
+  // Cache for isSubjectStillAiring results with 30-min TTL.
+  final Map<String, _AiringCacheEntry> _airingCache = <String, _AiringCacheEntry>{};
+  static const Duration _airingCacheTtl = Duration(minutes: 30);
 
   bool _proxyEnabled;
   String _proxyHost;
@@ -428,6 +439,21 @@ Future<String> _getWithRetry(
   }
 
   Future<bool> isSubjectStillAiring(String subjectId) async {
+    if (subjectId.isEmpty) return false;
+
+    // Check cache first.
+    final _AiringCacheEntry? cached = _airingCache[subjectId];
+    if (cached != null &&
+        DateTime.now().difference(cached.cachedAt) < _airingCacheTtl) {
+      return cached.result;
+    }
+
+    final bool result = await _checkSubjectStillAiring(subjectId);
+    _airingCache[subjectId] = _AiringCacheEntry(result, DateTime.now());
+    return result;
+  }
+
+  Future<bool> _checkSubjectStillAiring(String subjectId) async {
     if (subjectId.isEmpty) return false;
     final Map<String, dynamic>? subject = await _fetchSubjectFromApi(subjectId);
     if (subject == null || subject.isEmpty) return false;

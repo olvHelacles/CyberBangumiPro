@@ -20,6 +20,14 @@ import 'stores/app_state_store.dart';
 import 'stores/calendar_cache_manager.dart';
 import 'stores/cover_cache_manager.dart';
 import 'stores/watch_archive_store.dart';
+import 'widgets/progress_overlay.dart';
+import 'widgets/subject_detail_sheet.dart';
+import 'widgets/today_tab.dart';
+import 'widgets/watch_tab.dart';
+import 'widgets/week_calendar_tab.dart';
+import 'widgets/search_tab.dart';
+import 'widgets/settings_dialog.dart';
+import 'widgets/debug_tools.dart';
 
 TextStyle _styleWithWeight(TextStyle? base, FontWeight weight) {
   return (base ?? const TextStyle()).copyWith(
@@ -289,24 +297,6 @@ class _BangumiHomePageState extends State<BangumiHomePage>
   static const Alignment _appBarLogoAlignment = Alignment.centerLeft;
   static const EdgeInsets _appBarLogoPadding = EdgeInsets.only(left: 0);
 
-  // 在这里手动调整柱状图组件位置与尺寸。
-  static const EpisodeCommentChartLayout _commentChartLayout =
-      EpisodeCommentChartLayout(
-        alignment: Alignment.centerRight,
-        offsetX: 0,
-        offsetY: 20,
-        width: 250,
-        height: 67,
-        headerHeight: 16,
-        headerBottomGap: 4,
-        barGap: 2,
-        minBarHeight: 2,
-        backgroundRadius: 12,
-        contentPaddingHorizontal: 10,
-        contentPaddingVertical: 8,
-        backgroundColor: Color(0x00000000),
-        backgroundBorderColor: Color(0x00000000),
-      );
 
   final BangumiService _service = BangumiService();
   final CoverCacheManager _coverCacheManager = CoverCacheManager();
@@ -327,7 +317,6 @@ class _BangumiHomePageState extends State<BangumiHomePage>
   Timer? _statusTextTimer;
   bool _showNetworkIndicator = false;
   Timer? _networkIndicatorHideTimer;
-  List<BgmListOnAirEntry> _bgmOnAirEntries = <BgmListOnAirEntry>[];
   String _scheduleError = '';
   final List<String> _debugLogs = <String>[];
   int _lastLoggedActiveRequests = -1;
@@ -347,12 +336,6 @@ class _BangumiHomePageState extends State<BangumiHomePage>
   String _settingProxySubscriptionUrl = defaultSettingProxySubscriptionUrl;
   bool _weekCalendarShowAll = false;
   bool _debugShowChartHoverHitArea = false;
-  String? _hoveredChartSubjectId;
-  int? _hoveredChartBarIndex;
-  int? _debugHoverLocalX;
-  int? _debugHoverLocalY;
-  int? _debugHoverBarCount;
-
   static const int _maxDebugLogEntries = 400;
 
   List<DaySchedule> _scheduleData = <DaySchedule>[];
@@ -366,14 +349,8 @@ class _BangumiHomePageState extends State<BangumiHomePage>
     final Map<String, int> _legacyAbsoluteProgressCorrections =
       <String, int>{};
     bool _progressCorrectionMigrationDirty = false;
-    final Map<String, String> _searchCoverPaths = <String, String>{};
-  Map<String, int> _manualProgressCorrections = <String, int>{};
+    Map<String, int> _manualProgressCorrections = <String, int>{};
   Set<String> _selectedIds = <String>{};
-  List<SearchSubjectResult> _allSearchResults = <SearchSubjectResult>[];
-  int _searchTotalResults = 0;
-  int _currentSearchPage = 0;
-  bool _isSearching = false;
-  String _searchError = '';
   int? _debugWeekdayOverride;
 
   String get _systemWeekday {
@@ -926,389 +903,84 @@ class _BangumiHomePageState extends State<BangumiHomePage>
   }
 
   Future<void> _openSettingsDialog() async {
-    int tempProgressConcurrency = _settingProgressConcurrency;
-    int tempCoverCacheConcurrency = _settingCoverCacheConcurrency;
-    String tempApiUserAgent = _settingApiUserAgent;
-    ThemeMode tempThemeMode = _settingThemeMode;
-    bool tempAppBarBackgroundImageEnabled =
-      _settingAppBarBackgroundImageEnabled;
-    String tempAppBarBackgroundImagePath = _settingAppBarBackgroundImagePath;
-    bool tempTimezoneConversionEnabled = _settingTimezoneConversionEnabled;
-    int tempTimezoneOffsetMinutes = _settingTimezoneOffsetMinutes;
-    bool tempProxyEnabled = _settingProxyEnabled;
-    String tempProxySubscriptionUrl = _settingProxySubscriptionUrl;
-    final TextEditingController subscriptionCtrl = TextEditingController(
-      text: tempProxySubscriptionUrl,
-    );
-    final ThemeMode previousThemeMode = _settingThemeMode;
-    final bool previousTimezoneConversionEnabled =
-        _settingTimezoneConversionEnabled;
-    final int previousTimezoneOffsetMinutes = _settingTimezoneOffsetMinutes;
-    final bool previousProxyEnabled = _settingProxyEnabled;
     final List<int> commonTimezoneOffsets = <int>[
       for (int hour = -12; hour <= 14; hour++) hour * 60,
     ];
 
-    // Refresh current proxy node info before showing the dialog.
     unawaited(ClashManager.instance.refreshNodeInfo());
 
-    final bool? confirmed = await showDialog<bool>(
+    final SettingsData? result = await showDialog<SettingsData>(
       context: context,
       builder: (BuildContext context) {
-        return StatefulBuilder(
-          builder: (BuildContext context, StateSetter setLocalState) {
-            return AlertDialog(
-              title: const Text('设置'),
-              content: SizedBox(
-                width: 520,
-                child: SingleChildScrollView(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: <Widget>[
-                      DropdownButtonFormField<ThemeMode>(
-                        initialValue: tempThemeMode,
-                        decoration: const InputDecoration(
-                          labelText: '主题模式',
-                          border: OutlineInputBorder(),
-                        ),
-                        items: const <ThemeMode>[
-                          ThemeMode.system,
-                          ThemeMode.light,
-                          ThemeMode.dark,
-                        ].map((ThemeMode mode) {
-                          return DropdownMenuItem<ThemeMode>(
-                            value: mode,
-                            child: Text(themeModeDisplayText(mode)),
-                          );
-                        }).toList(),
-                        onChanged: (ThemeMode? value) {
-                          if (value == null) {
-                            return;
-                          }
-                          setLocalState(() {
-                            tempThemeMode = value;
-                          });
-                        },
-                      ),
-                      const Divider(height: 24),
-                      SwitchListTile(
-                        contentPadding: EdgeInsets.zero,
-                        value: tempAppBarBackgroundImageEnabled,
-                        onChanged: (bool value) {
-                          setLocalState(() {
-                            tempAppBarBackgroundImageEnabled = value;
-                          });
-                        },
-                        title: const Text('启用 AppBar 背景图'),
-                        subtitle: const Text(
-                          '可填本地路径或 http(s) 地址',
-                        ),
-                      ),
-                      const SizedBox(height: 6),
-                      TextFormField(
-                        initialValue: tempAppBarBackgroundImagePath,
-                        decoration: const InputDecoration(
-                          border: OutlineInputBorder(),
-                          labelText: 'AppBar/TabBar 背景图路径',
-                          hintText:
-                              '例如 assets/images/appbar_bg.png 或 C:/path/bg.png',
-                        ),
-                        onChanged: (String value) {
-                          setLocalState(() {
-                            tempAppBarBackgroundImagePath = value.trim();
-                          });
-                        },
-                      ),
-                      const Divider(height: 24),
-                      Align(
-                        alignment: Alignment.centerLeft,
-                        child: Text('进度刷新并发: $tempProgressConcurrency'),
-                      ),
-                      Slider(
-                        min: 1,
-                        max: 30,
-                        divisions: 29,
-                        value: tempProgressConcurrency.toDouble(),
-                        label: '$tempProgressConcurrency',
-                        onChanged: (double value) {
-                          setLocalState(() {
-                            tempProgressConcurrency = _clampProgressConcurrency(
-                              value.round(),
-                            );
-                          });
-                        },
-                      ),
-                      Align(
-                        alignment: Alignment.centerLeft,
-                        child: Text('封面缓存并发: $tempCoverCacheConcurrency'),
-                      ),
-                      Slider(
-                        min: 1,
-                        max: 24,
-                        divisions: 23,
-                        value: tempCoverCacheConcurrency.toDouble(),
-                        label: '$tempCoverCacheConcurrency',
-                        onChanged: (double value) {
-                          setLocalState(() {
-                            tempCoverCacheConcurrency =
-                                _clampCoverCacheConcurrency(value.round());
-                          });
-                        },
-                      ),
-                      const Divider(height: 24),
-                      SwitchListTile(
-                        contentPadding: EdgeInsets.zero,
-                        value: tempTimezoneConversionEnabled,
-                        onChanged: (bool value) {
-                          setLocalState(() {
-                            tempTimezoneConversionEnabled = value;
-                          });
-                        },
-                        title: const Text('转换时区'),
-                        subtitle: Text(
-                          tempTimezoneConversionEnabled
-                              ? '已开启，当前目标 ${BroadcastTimeConverter.formatUtcOffsetLabel(tempTimezoneOffsetMinutes)}'
-                              : '已关闭，按 JST 显示',
-                        ),
-                      ),
-                      const SizedBox(height: 6),
-                      DropdownButtonFormField<int>(
-                        initialValue: tempTimezoneOffsetMinutes,
-                        decoration: const InputDecoration(
-                          labelText: '目标时区（固定选项）',
-                          border: OutlineInputBorder(),
-                        ),
-                        items: commonTimezoneOffsets
-                            .map(
-                              (int offset) => DropdownMenuItem<int>(
-                                value: offset,
-                                child: Text(
-                                  BroadcastTimeConverter.formatUtcOffsetLabel(
-                                    offset,
-                                  ),
-                                ),
-                              ),
-                            )
-                            .toList(),
-                        onChanged: tempTimezoneConversionEnabled
-                            ? (int? value) {
-                                if (value == null) {
-                                  return;
-                                }
-                                setLocalState(() {
-                                  tempTimezoneOffsetMinutes =
-                                      _clampTimezoneOffsetMinutes(value);
-                                });
-                              }
-                            : null,
-                      ),
-                      const Divider(height: 24),
-                      // ── Clash / Proxy ──
-                      Row(
-                        children: <Widget>[
-                          Icon(
-                            Icons.circle,
-                            size: 10,
-                            color: ClashManager.instance.isRunning
-                                ? const Color(0xFF22C55E)
-                                : const Color(0xFFEF4444),
-                          ),
-                          const SizedBox(width: 6),
-                          Expanded(
-                            child: Text(
-                              ClashManager.instance.isRunning
-                                  ? (ClashManager.instance.currentNode.isNotEmpty
-                                      ? '${ClashManager.instance.currentNode}  ${ClashManager.instance.currentLatency}ms'
-                                      : 'Clash: 未就绪')
-                                  : 'Clash: 未就绪',
-                              style: const TextStyle(fontSize: 13),
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          ),
-                          TextButton.icon(
-                            onPressed: () async {
-                              setLocalState(() {});
-                              try {
-                                await ClashManager.instance.stop();
-                                await ClashManager.instance.start();
-                                await ClashManager.instance.refreshNodeInfo();
-                                setLocalState(() {});
-                              } catch (e) {
-                                setLocalState(() {});
-                              }
-                            },
-                            icon: const Icon(Icons.refresh, size: 16),
-                            label: const Text('重启', style: TextStyle(fontSize: 12)),
-                            style: TextButton.styleFrom(
-                              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                              visualDensity: VisualDensity.compact,
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 6),
-                      TextFormField(
-                        controller: subscriptionCtrl,
-                        enableInteractiveSelection: true,
-                        decoration: const InputDecoration(
-                          border: OutlineInputBorder(),
-                          labelText: 'Clash 订阅链接',
-                          hintText: 'https://your-subscription-url',
-                        ),
-                        onChanged: (String value) {
-                          setLocalState(() {
-                            tempProxySubscriptionUrl = value.trim();
-                          });
-                        },
-                      ),
-                      const SizedBox(height: 6),
-                      SwitchListTile(
-                        contentPadding: EdgeInsets.zero,
-                        value: tempProxyEnabled,
-                        onChanged: (bool value) {
-                          setLocalState(() {
-                            tempProxyEnabled = value;
-                          });
-                        },
-                        title: const Text('启用代理'),
-                        subtitle: const Text('127.0.0.1:7890（内建 Clash）'),
-                      ),
-                      const Divider(height: 24),
-                      Align(
-                        alignment: Alignment.centerLeft,
-                        child: Text('Bangumi API UA'),
-                      ),
-                      const SizedBox(height: 5),
-                      TextFormField(
-                        initialValue: tempApiUserAgent,
-                        decoration: const InputDecoration(
-                          border: OutlineInputBorder(),
-                          hintText: '用于 Bangumi API 请求的 User-Agent',
-                        ),
-                        onChanged: (String value) {
-                          setLocalState(() {
-                            tempApiUserAgent = value;
-                          });
-                        },
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-              actions: <Widget>[
-                TextButton.icon(
-                  onPressed: () async {
-                    await _openWatchArchiveDialog();
-                  },
-                  icon: const Icon(Icons.archive_outlined),
-                  label: const Text('关注归档'),
-                ),
-                TextButton.icon(
-                  onPressed: () async {
-                    Navigator.of(context).pop(false);
-                    await _clearCoverCache();
-                  },
-                  icon: const Icon(Icons.delete_sweep_outlined),
-                  label: const Text('清除封面缓存'),
-                ),
-                TextButton(
-                  onPressed: () => Navigator.of(context).pop(false),
-                  child: const Text('取消'),
-                ),
-                FilledButton(
-                  onPressed: () => Navigator.of(context).pop(true),
-                  child: const Text('保存'),
-                ),
-              ],
-            );
+        return SettingsDialog(
+          initialData: SettingsData(
+            progressConcurrency: _settingProgressConcurrency,
+            coverCacheConcurrency: _settingCoverCacheConcurrency,
+            apiUserAgent: _settingApiUserAgent,
+            themeMode: _settingThemeMode,
+            appBarBackgroundImageEnabled: _settingAppBarBackgroundImageEnabled,
+            appBarBackgroundImagePath: _settingAppBarBackgroundImagePath,
+            timezoneConversionEnabled: _settingTimezoneConversionEnabled,
+            timezoneOffsetMinutes: _settingTimezoneOffsetMinutes,
+            proxyEnabled: _settingProxyEnabled,
+            proxySubscriptionUrl: _settingProxySubscriptionUrl,
+          ),
+          commonTimezoneOffsets: commonTimezoneOffsets,
+          onOpenWatchArchive: () {
+            Navigator.of(context).pop();
+            _openWatchArchiveDialog();
           },
+          onClearCoverCache: () => _clearCoverCache(),
         );
       },
     );
 
-    // Save the subscription URL before setState so we can detect changes.
-    final String previousSubscriptionUrl = _settingProxySubscriptionUrl;
+    if (result == null || !mounted) return;
 
-    if (confirmed != true || !mounted) {
-      return;
-    }
-
-    final bool themeModeChanged = previousThemeMode != tempThemeMode;
+    final bool themeModeChanged = _settingThemeMode != result.themeMode;
     final bool timezoneChanged =
-        previousTimezoneConversionEnabled != tempTimezoneConversionEnabled ||
-        previousTimezoneOffsetMinutes != tempTimezoneOffsetMinutes;
-    final bool proxyChanged = previousProxyEnabled != tempProxyEnabled;
+        _settingTimezoneConversionEnabled != result.timezoneConversionEnabled ||
+        _settingTimezoneOffsetMinutes != result.timezoneOffsetMinutes;
+    final bool proxyChanged = _settingProxyEnabled != result.proxyEnabled;
+    final bool subscriptionChanged =
+        _settingProxySubscriptionUrl != result.proxySubscriptionUrl;
 
     setState(() {
-      _settingProgressConcurrency = tempProgressConcurrency;
-      _settingCoverCacheConcurrency = tempCoverCacheConcurrency;
-      _settingApiUserAgent = tempApiUserAgent.trim();
-      _settingThemeMode = tempThemeMode;
-      _settingAppBarBackgroundImageEnabled = tempAppBarBackgroundImageEnabled;
-      _settingAppBarBackgroundImagePath = tempAppBarBackgroundImagePath.trim();
-      _settingTimezoneConversionEnabled = tempTimezoneConversionEnabled;
-      _settingTimezoneOffsetMinutes = _clampTimezoneOffsetMinutes(
-        tempTimezoneOffsetMinutes,
-      );
-      _settingProxyEnabled = tempProxyEnabled;
+      _settingProgressConcurrency = result.progressConcurrency;
+      _settingCoverCacheConcurrency = result.coverCacheConcurrency;
+      _settingApiUserAgent = result.apiUserAgent;
+      _settingThemeMode = result.themeMode;
+      _settingAppBarBackgroundImageEnabled = result.appBarBackgroundImageEnabled;
+      _settingAppBarBackgroundImagePath = result.appBarBackgroundImagePath;
+      _settingTimezoneConversionEnabled = result.timezoneConversionEnabled;
+      _settingTimezoneOffsetMinutes = result.timezoneOffsetMinutes;
+      _settingProxyEnabled = result.proxyEnabled;
       _settingProxyHost = defaultSettingProxyHost;
       _settingProxyPort = defaultSettingProxyPort;
       _settingProxyBypass = defaultSettingProxyBypass;
-      _settingProxySubscriptionUrl =
-          subscriptionCtrl.text.trim().isNotEmpty
-              ? subscriptionCtrl.text.trim()
-              : tempProxySubscriptionUrl;
-      _service.apiUserAgent = _settingApiUserAgent.isEmpty
-          ? appUserAgent
-          : _settingApiUserAgent;
+      _settingProxySubscriptionUrl = result.proxySubscriptionUrl;
     });
+
     if (themeModeChanged) {
       widget.onThemeModeChanged?.call(_settingThemeMode);
-      _appendDebugLog('主题: 当前模式 ${themeModeDisplayText(_settingThemeMode)}');
     }
     if (proxyChanged) {
       _service.updateProxySettings(
-        _settingProxyEnabled,
-        _settingProxyHost,
-        _settingProxyPort,
-        _settingProxyBypass,
+        _settingProxyEnabled, _settingProxyHost, _settingProxyPort, _settingProxyBypass,
       );
     }
-    // When the subscription URL changes, regenerate the clash config and
-    // restart the proxy so new nodes take effect.
-    final String effectiveNewUrl = subscriptionCtrl.text.trim().isNotEmpty
-        ? subscriptionCtrl.text.trim()
-        : tempProxySubscriptionUrl.trim();
-    if (effectiveNewUrl.isNotEmpty &&
-        effectiveNewUrl != previousSubscriptionUrl) {
-      _appendDebugLog('代理: 正在应用订阅链接…');
+    if (result.proxySubscriptionUrl.isNotEmpty && subscriptionChanged) {
       try {
         await ClashManager.instance.stop();
-        await ClashManager.instance.applySubscription(
-          effectiveNewUrl,
-        );
+        await ClashManager.instance.applySubscription(result.proxySubscriptionUrl);
         await ClashManager.instance.start();
-        _appendDebugLog('代理: 订阅已生效');
-      } catch (e) {
-        _appendDebugLog('代理: 订阅应用失败 ($e)');
-      }
+      } catch (_) {}
     }
     await _saveSettings();
-    _appendDebugLog('网络: 当前 API UA: ${_service.effectiveApiUserAgent}');
-    _appendDebugLog('时区: 当前显示时区 $_currentTimezoneFullLabel');
-    if (_settingProxyEnabled) {
-      _appendDebugLog('代理: 已启用 $_settingProxyHost:$_settingProxyPort');
-    }
-
     if (timezoneChanged) {
-      _showStatus('设置已保存，正在按新时区重算日历与进度...', autoHide: false);
       await _refreshCalendarSchedule(forceNetwork: true);
       await _refreshProgressFromMainAction();
-      _showStatus('设置已保存并完成时区重算');
-      return;
     }
-
-    _showStatus('设置已保存');
   }
 
   Future<void> _openWatchArchiveDialog() async {
@@ -1882,544 +1554,145 @@ class _BangumiHomePageState extends State<BangumiHomePage>
   }
 
   
-  String _normalizeTitleStrict(String raw) {
-    String value = raw.toLowerCase();
-    value = value
-        .toLowerCase()
-        .replaceAll(RegExp(r'\s+'), '')
-        .replaceAll(RegExp(r'[^\u4e00-\u9fffA-Za-z0-9]'), '');
-    return value;
-  }
-
-  
-  String _normalizeTitleLoose(String raw) {
-    String value = raw.toLowerCase();
-    value = value.replaceAll(RegExp(r'第\s*\d+\s*[期季]'), '');
-    value = value.replaceAll(
-      RegExp(r'part\.?\s*\d+', caseSensitive: false),
-      '',
-    );
-    value = value.replaceAll(RegExp(r'season\s*\d+', caseSensitive: false), '');
-    value = value.replaceAll(RegExp(r'\([^)]*\)'), '');
-    value = value.replaceAll(RegExp(r'\[[^\]]*\]'), '');
-    value = value.replaceAll(RegExp(r'（[^）]*）'), '');
-    value = value.replaceAll(RegExp(r'【[^】]*】'), '');
-    value = value.replaceAll(RegExp(r'\s+'), '');
-    value = value.replaceAll(RegExp(r'[^\u4e00-\u9fffA-Za-z0-9]'), '');
-    return value;
-  }
-
-  
-  List<String> _buildLooseNameCandidates(String raw) {
-    final Set<String> candidates = <String>{};
-
-    
-    void push(String s) {
-      final String value = _normalizeTitleLoose(s);
-      if (value.length >= 2) {
-        candidates.add(value);
-      }
-    }
-
-    push(raw);
-
-    String stripped = raw;
-    stripped = stripped.replaceAll(RegExp(r'\([^)]*\)'), ' ');
-    stripped = stripped.replaceAll(RegExp(r'\[[^\]]*\]'), ' ');
-    stripped = stripped.replaceAll(RegExp(r'（[^）]*）'), ' ');
-    stripped = stripped.replaceAll(RegExp(r'【[^】]*】'), ' ');
-    push(stripped);
-
-    for (final String sep in <String>[
-      '/',
-      '／',
-      '|',
-      '｜',
-      ':',
-      '：',
-      '-',
-      '–',
-      '—',
-      '・',
-    ]) {
-      if (stripped.contains(sep)) {
-        final List<String> parts = stripped
-            .split(sep)
-            .map((String e) => e.trim())
-            .where((String e) => e.isNotEmpty)
-            .toList();
-        if (parts.isNotEmpty) {
-          push(parts.first);
-        }
-      }
-    }
-
-    return candidates.toList();
-  }
-
-  
-  int _containmentScore(String a, String b) {
-    if (a.isEmpty || b.isEmpty) {
-      return 0;
-    }
-    if (a == b) {
-      return 10000 + a.length;
-    }
-
-    final bool contains = a.contains(b) || b.contains(a);
-    if (!contains) {
-      return 0;
-    }
-
-    final int shorter = a.length < b.length ? a.length : b.length;
-    final int longer = a.length > b.length ? a.length : b.length;
-    if (shorter < 3) {
-      return 0;
-    }
-    return shorter * 100 - (longer - shorter);
-  }
-
-  
-  int _bigramSimilarityScore(String a, String b) {
-    if (a.length < 4 || b.length < 4) {
-      return 0;
-    }
-
-    
-    Set<String> toBigrams(String value) {
-      final Set<String> grams = <String>{};
-      for (int i = 0; i < value.length - 1; i++) {
-        grams.add(value.substring(i, i + 2));
-      }
-      return grams;
-    }
-
-    final Set<String> ga = toBigrams(a);
-    final Set<String> gb = toBigrams(b);
-    if (ga.isEmpty || gb.isEmpty) {
-      return 0;
-    }
-
-    int intersection = 0;
-    for (final String g in ga) {
-      if (gb.contains(g)) {
-        intersection++;
-      }
-    }
-
-    if (intersection == 0) {
-      return 0;
-    }
-
-    final int unionCount = ga.length + gb.length - intersection;
-    if (unionCount <= 0) {
-      return 0;
-    }
-
-    final double jaccard = intersection / unionCount;
-    if (jaccard < 0.62) {
-      return 0;
-    }
-
-    return (jaccard * 1000).round();
-  }
-
-  
-  int _editSimilarityScore(String a, String b) {
-    if (a.length < 4 || b.length < 4) {
-      return 0;
-    }
-
-    
-    int levenshtein(String s, String t) {
-      final int n = s.length;
-      final int m = t.length;
-      if (n == 0) {
-        return m;
-      }
-      if (m == 0) {
-        return n;
-      }
-
-      List<int> prev = List<int>.generate(m + 1, (int i) => i);
-      List<int> curr = List<int>.filled(m + 1, 0);
-
-      for (int i = 1; i <= n; i++) {
-        curr[0] = i;
-        for (int j = 1; j <= m; j++) {
-          final int cost = s.codeUnitAt(i - 1) == t.codeUnitAt(j - 1) ? 0 : 1;
-          final int deletion = prev[j] + 1;
-          final int insertion = curr[j - 1] + 1;
-          final int substitution = prev[j - 1] + cost;
-          int best = deletion < insertion ? deletion : insertion;
-          if (substitution < best) {
-            best = substitution;
-          }
-          curr[j] = best;
-        }
-        final List<int> temp = prev;
-        prev = curr;
-        curr = temp;
-      }
-
-      return prev[m];
-    }
-
-    final int distance = levenshtein(a, b);
-    final int maxLen = a.length > b.length ? a.length : b.length;
-    if (maxLen == 0) {
-      return 0;
-    }
-
-    final double similarity = 1 - distance / maxLen;
-    if (similarity < 0.70) {
-      return 0;
-    }
-
-    return (similarity * 900).round();
-  }
-
-  
-  String _matchBgmListTimeForItem(SubjectItem item) {
-    if (_bgmOnAirEntries.isEmpty) {
-      return '';
-    }
-
-    final String jpName = item.nameOrigin.trim();
-    final String fallbackName = item.displayName.trim();
-    final List<String> names = <String>[
-      if (jpName.isNotEmpty) jpName,
-      if (jpName.isEmpty && fallbackName.isNotEmpty) fallbackName,
-    ];
-    if (names.isEmpty) {
-      return '';
-    }
-
-    final Set<String> strictCandidates = <String>{};
-    final Set<String> looseCandidates = <String>{};
-    for (final String name in names) {
-      final String strict = _normalizeTitleStrict(name);
-      if (strict.isNotEmpty) {
-        strictCandidates.add(strict);
-      }
-      looseCandidates.addAll(_buildLooseNameCandidates(name));
-    }
-
-    int bestScore = 0;
-    String bestTime = '';
-
-    for (final BgmListOnAirEntry entry in _bgmOnAirEntries) {
-      if (entry.timeJst.isEmpty) {
-        continue;
-      }
-      for (final String jpTitle in entry.jpTitles) {
-        final String strictKey = _normalizeTitleStrict(jpTitle);
-        if (strictKey.isNotEmpty && strictCandidates.contains(strictKey)) {
-          return entry.timeJst;
-        }
-
-        final String looseKey = _normalizeTitleLoose(jpTitle);
-        if (looseKey.isEmpty) {
-          continue;
-        }
-        if (looseCandidates.contains(looseKey)) {
-          return entry.timeJst;
-        }
-
-        for (final String candidate in looseCandidates) {
-          final int containment = _containmentScore(candidate, looseKey);
-          if (containment > bestScore) {
-            bestScore = containment;
-            bestTime = entry.timeJst;
-          }
-
-          final int bigram = _bigramSimilarityScore(candidate, looseKey);
-          if (bigram > bestScore) {
-            bestScore = bigram;
-            bestTime = entry.timeJst;
-          }
-
-          final int edit = _editSimilarityScore(candidate, looseKey);
-          if (edit > bestScore) {
-            bestScore = edit;
-            bestTime = entry.timeJst;
-          }
-        }
-      }
-    }
-
-    if (bestScore >= 420) {
-      return bestTime;
-    }
-
-    return '';
-  }
-
-  Future<void> _ensureBgmListEntriesLoaded({bool forceRefresh = false}) async {
-    if (!forceRefresh && _bgmOnAirEntries.isNotEmpty) {
-      return;
-    }
-    if (forceRefresh) {
-      _appendDebugLog('更新时间: 强制重新抓取 BGMLIST OnAir JSON');
-    }
-
-    final String onAirJson = await _service.fetchBgmListOnAirJson();
-    if (onAirJson.trim().isEmpty) {
-      return;
-    }
-
-    final List<BgmListOnAirEntry> parsed = _service.parseBgmListOnAirEntries(
-      onAirJson,
-    );
-    if (parsed.isNotEmpty) {
-      _bgmOnAirEntries = parsed;
-    }
-  }
-
-  // ignore: unused_element
-  Future<List<DaySchedule>> _attachBgmListTimesToSchedule(
-    List<DaySchedule> schedule,
-    {bool forceRefreshBgmTimes = false}
-  ) async {
-    try {
-      await _ensureBgmListEntriesLoaded(forceRefresh: forceRefreshBgmTimes);
-      if (_bgmOnAirEntries.isEmpty) {
-        return schedule;
-      }
-
-      return schedule.map((DaySchedule day) {
-        final List<SubjectItem> patchedItems = day.items
-            .map(
-              (SubjectItem item) =>
-                  item.copyWith(updateTime: _matchBgmListTimeForItem(item)),
-            )
-            .toList();
-        return DaySchedule(weekday: day.weekday, items: patchedItems);
-      }).toList();
-    } catch (_) {
-      // Ignore BGMLIST failures and keep main calendar flow available.
-      return schedule;
-    }
-  }
-
-  
-  void _applyDebugWeekdayOverride(int? weekday) {
-    setState(() {
-      _debugWeekdayOverride = weekday;
-      _todayItems = _resolveTodayItemsFromSchedule(_scheduleData);
-    });
-    _showStatus(
-      weekday == null ? '已切换为系统时间' : '已调试指定今日为 ${weekdayMap[weekday]}',
-    );
-    unawaited(_hydrateCachedCoversForTodayItems());
-  }
-
-  Future<void> _openWeekdayDebugDialog() async {
-    final int? selected = await showDialog<int?>(
+  Future<void> _openDebugToolsDialog() async {
+    // Delegate to DebugTools widget.
+    await DebugTools.showTools(
       context: context,
-      builder: (BuildContext context) {
-        int? tempValue = _debugWeekdayOverride;
-        return StatefulBuilder(
-          builder: (BuildContext context, StateSetter setLocalState) {
-            final List<DropdownMenuItem<int?>> options =
-                <DropdownMenuItem<int?>>[
-                  DropdownMenuItem<int?>(
-                    value: null,
-                    child: Text('系统时间（当前：$_systemWeekday）'),
-                  ),
-                  for (int i = 1; i <= 7; i++)
-                    DropdownMenuItem<int?>(
-                      value: i,
-                      child: Text(weekdayMap[i] ?? '星期$i'),
-                    ),
-                ];
-
+      debugLogs: _debugLogs,
+      debugWeekdayOverride: _debugWeekdayOverride,
+      debugShowChartHoverHitArea: _debugShowChartHoverHitArea,
+      systemWeekday: _systemWeekday,
+      watchlist: _watchlist,
+      watchArchiveStore: _watchArchiveStore,
+      currentQuarterLabel: _currentQuarterLabel(),
+      onApplyWeekdayOverride: (int? weekday) {
+        setState(() {
+          _debugWeekdayOverride = weekday;
+          _todayItems = _resolveTodayItemsFromSchedule(_scheduleData);
+        });
+        _showStatus(
+          weekday == null ? '已切换为系统时间' : '已调试指定今日为 ${weekdayMap[weekday]}',
+        );
+        unawaited(_hydrateCachedCoversForTodayItems());
+      },
+      onClearLogs: () {
+        setState(() {
+          _debugLogs.clear();
+        });
+      },
+      onArchiveWatchlist: () {
+        final List<SubjectItem> targets = _watchlist
+            .where((SubjectItem item) => item.subjectId.isNotEmpty)
+            .toList();
+        if (targets.isEmpty) {
+          _showStatus('调试归档：当前没有可归档的关注番剧');
+          return;
+        }
+        final String quarter = _currentQuarterLabel();
+        unawaited(_watchArchiveStore.appendEntries(
+          targets.map((SubjectItem item) =>
+              WatchArchiveEntry.fromSubject(item, quarter: quarter)).toList(),
+        ));
+        _showStatus('调试归档完成：已加入 ${targets.length} 部番剧');
+      },
+      onToggleHoverHitArea: () {
+        setState(() {
+          _debugShowChartHoverHitArea = !_debugShowChartHoverHitArea;
+        });
+      },
+      showStatus: (String msg) => _showStatus(msg),
+      appendDebugLog: (String msg) => _appendDebugLog(msg),
+      openLogDialog: () async {
+        final String logText = _debugLogs.isEmpty
+            ? '暂无日志输出。'
+            : _debugLogs.join('\n');
+        await showDialog<void>(
+          context: context,
+          builder: (BuildContext context) {
             return AlertDialog(
-              title: const Text('调试：指定今日星期'),
+              title: const Text('调试日志窗口'),
               content: SizedBox(
-                width: 320,
-                child: DropdownButtonFormField<int?>(
-                  initialValue: tempValue,
-                  decoration: const InputDecoration(
-                    labelText: '程序中“今日”对应星期',
-                    border: OutlineInputBorder(),
+                width: 760, height: 460,
+                child: Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                    borderRadius: BorderRadius.circular(8),
                   ),
-                  items: options,
-                  onChanged: (int? value) {
-                    setLocalState(() {
-                      tempValue = value;
-                    });
-                  },
+                  child: SingleChildScrollView(
+                    child: SelectableText(logText,
+                      style: const TextStyle(fontFamily: 'Consolas', fontSize: 12, height: 1.4)),
+                  ),
                 ),
               ),
               actions: <Widget>[
                 TextButton(
-                  onPressed: () => Navigator.of(context).pop(),
-                  child: const Text('取消'),
+                  onPressed: () {
+                    setState(() { _debugLogs.clear(); });
+                    _appendDebugLog('日志已手动清空');
+                    Navigator.of(context).pop();
+                  },
+                  child: const Text('清空并关闭'),
                 ),
                 FilledButton(
-                  onPressed: () => Navigator.of(context).pop(tempValue),
-                  child: const Text('应用'),
+                  onPressed: () => Navigator.of(context).pop(),
+                  child: const Text('关闭'),
                 ),
               ],
             );
           },
         );
       },
-    );
-
-    if (!mounted || selected == _debugWeekdayOverride) {
-      return;
-    }
-    _applyDebugWeekdayOverride(selected);
-  }
-
-  Future<void> _openDebugLogDialog() async {
-    await showDialog<void>(
-      context: context,
-      builder: (BuildContext context) {
-        final String logText = _debugLogs.isEmpty
-            ? '暂无日志输出。'
-            : _debugLogs.join('\n');
-
-        return AlertDialog(
-          title: const Text('调试日志窗口'),
-          content: SizedBox(
-            width: 760,
-            height: 460,
-            child: Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: Theme.of(context).colorScheme.surfaceContainerHighest,
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: SingleChildScrollView(
-                child: SelectableText(
-                  logText,
-                  style: const TextStyle(
-                    fontFamily: 'Consolas',
-                    fontSize: 12,
-                    height: 1.4,
+      openWeekdayDialog: () async {
+        final int? selected = await showDialog<int?>(
+          context: context,
+          builder: (BuildContext context) {
+            int? tempValue = _debugWeekdayOverride;
+            return StatefulBuilder(
+              builder: (BuildContext context, StateSetter setLocalState) {
+                return AlertDialog(
+                  title: const Text('调试：指定今日星期'),
+                  content: SizedBox(
+                    width: 320,
+                    child: DropdownButtonFormField<int?>(
+                      initialValue: tempValue,
+                      decoration: const InputDecoration(
+                        labelText: '程序中”今日”对应星期',
+                        border: OutlineInputBorder(),
+                      ),
+                      items: <DropdownMenuItem<int?>>[
+                        DropdownMenuItem<int?>(
+                          value: null,
+                          child: Text('系统时间（当前：$_systemWeekday）'),
+                        ),
+                        for (int i = 1; i <= 7; i++)
+                          DropdownMenuItem<int?>(
+                            value: i,
+                            child: Text(weekdayMap[i] ?? '星期$i'),
+                          ),
+                      ],
+                      onChanged: (int? value) { setLocalState(() { tempValue = value; }); },
+                    ),
                   ),
-                ),
-              ),
-            ),
-          ),
-          actions: <Widget>[
-            TextButton(
-              onPressed: () {
-                setState(() {
-                  _debugLogs.clear();
-                  _appendDebugLog('日志已手动清空');
-                });
-                Navigator.of(context).pop();
+                  actions: <Widget>[
+                    TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('取消')),
+                    FilledButton(onPressed: () => Navigator.of(context).pop(tempValue), child: const Text('应用')),
+                  ],
+                );
               },
-              child: const Text('清空并关闭'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.of(context).pop(),
-              child: const Text('关闭'),
-            ),
-          ],
+            );
+          },
         );
+        if (selected != _debugWeekdayOverride) {
+          setState(() {
+            _debugWeekdayOverride = selected;
+            _todayItems = _resolveTodayItemsFromSchedule(_scheduleData);
+          });
+          _showStatus(selected == null ? '已切换为系统时间' : '已调试指定今日为 ${weekdayMap[selected]}');
+          unawaited(_hydrateCachedCoversForTodayItems());
+        }
       },
     );
-  }
-
-  Future<void> _archiveCurrentWatchlistForDebug() async {
-    final List<SubjectItem> targets = _watchlist
-        .where((SubjectItem item) => item.subjectId.isNotEmpty)
-        .toList();
-    if (targets.isEmpty) {
-      _showStatus('调试归档：当前没有可归档的关注番剧');
-      return;
-    }
-
-    final String quarter = _currentQuarterLabel();
-    final List<WatchArchiveEntry> entries = targets
-        .map(
-          (SubjectItem item) =>
-              WatchArchiveEntry.fromSubject(item, quarter: quarter),
-        )
-        .toList();
-    await _watchArchiveStore.appendEntries(entries);
-    _appendDebugLog('调试归档：已写入 ${entries.length} 条关注归档记录');
-    _showStatus('调试归档完成：已加入 ${entries.length} 部番剧');
-  }
-
-  Future<void> _openDebugToolsDialog() async {
-    final String? action = await showModalBottomSheet<String>(
-      context: context,
-      showDragHandle: true,
-      builder: (BuildContext context) {
-        return SafeArea(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: <Widget>[
-              ListTile(
-                leading: const Icon(Icons.terminal_outlined),
-                title: const Text('打开日志窗口'),
-                subtitle: const Text('查看状态、网络与错误输出'),
-                onTap: () => Navigator.of(context).pop('logs'),
-              ),
-              ListTile(
-                leading: const Icon(Icons.event_available_outlined),
-                title: const Text('调试今日星期'),
-                subtitle: const Text('指定程序中的“今日”星期值'),
-                onTap: () => Navigator.of(context).pop('weekday'),
-              ),
-              ListTile(
-                leading: Icon(
-                  _debugShowChartHoverHitArea
-                      ? Icons.visibility_outlined
-                      : Icons.visibility_off_outlined,
-                ),
-                title: const Text('悬停判定区域可视化'),
-                subtitle: Text(
-                  _debugShowChartHoverHitArea ? '当前: 已开启' : '当前: 已关闭',
-                ),
-                onTap: () => Navigator.of(context).pop('hover-hit-area'),
-              ),
-              ListTile(
-                leading: const Icon(Icons.archive_outlined),
-                title: const Text('调试：归档当前关注'),
-                subtitle: const Text('立即将当前关注番剧写入关注归档'),
-                onTap: () => Navigator.of(context).pop('archive-current-watch'),
-              ),
-            ],
-          ),
-        );
-      },
-    );
-
-    if (!mounted || action == null) {
-      return;
-    }
-
-    if (action == 'logs') {
-      _appendDebugLog('已打开日志窗口');
-      await _openDebugLogDialog();
-      return;
-    }
-
-    if (action == 'weekday') {
-      await _openWeekdayDebugDialog();
-      return;
-    }
-
-    if (action == 'archive-current-watch') {
-      await _archiveCurrentWatchlistForDebug();
-      return;
-    }
-
-    if (action == 'hover-hit-area') {
-      setState(() {
-        _debugShowChartHoverHitArea = !_debugShowChartHoverHitArea;
-      });
-      _showStatus(
-        _debugShowChartHoverHitArea ? '已开启悬停判定区域可视化' : '已关闭悬停判定区域可视化',
-      );
-    }
   }
 
   Future<void> _hydrateCachedCoversForTodayItems({
@@ -3114,117 +2387,6 @@ class _BangumiHomePageState extends State<BangumiHomePage>
   }
 
   
-  Widget _buildTaskProgressOverlay() {
-    final bool showStatusText =
-        _showStatusText && _statusText.trim().isNotEmpty;
-    final bool showCoverProgress =
-        _isCachingCalendarCovers && _calendarCoverCacheTotal > 0;
-    final bool showRefreshProgress =
-        _isLoadingProgress && _progressRefreshTotal > 0;
-
-    if (!showStatusText && !showCoverProgress && !showRefreshProgress) {
-      return const SizedBox.shrink();
-    }
-
-    double coverValue = 0;
-    if (_calendarCoverCacheTotal > 0) {
-      coverValue = _calendarCoverCacheDone / _calendarCoverCacheTotal;
-    }
-
-    double refreshValue = 0;
-    if (_progressRefreshTotal > 0) {
-      refreshValue = _progressRefreshDone / _progressRefreshTotal;
-    }
-
-    return Align(
-      alignment: Alignment.topRight,
-      child: IgnorePointer(
-        child: Container(
-          width: 240,
-          margin: const EdgeInsets.only(top: 8, right: 12),
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-          decoration: BoxDecoration(
-            color: Theme.of(
-              context,
-            ).colorScheme.surface.withValues(alpha: 0.92),
-            borderRadius: BorderRadius.circular(10),
-            border: Border.all(
-              color: Theme.of(context).colorScheme.outlineVariant,
-            ),
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: <Widget>[
-              if (showStatusText)
-                Flexible(
-                  flex: 6,
-                  child: Text(
-                    _statusText,
-                    style: Theme.of(context).textTheme.bodySmall,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
-              if (showStatusText && (showCoverProgress || showRefreshProgress))
-                const SizedBox(width: 8),
-              if (showCoverProgress || showRefreshProgress)
-                Expanded(
-                  flex: 4,
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: <Widget>[
-                      if (showCoverProgress)
-                        LinearProgressIndicator(
-                          value: coverValue.clamp(0, 1),
-                          minHeight: 3,
-                        ),
-                      if (showCoverProgress && showRefreshProgress)
-                        const SizedBox(height: 4),
-                      if (showRefreshProgress)
-                        LinearProgressIndicator(
-                          value: refreshValue.clamp(0, 1),
-                          minHeight: 3,
-                        ),
-                    ],
-                  ),
-                ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  
-  String _formatProgress(SubjectProgress? progress) {
-    if (progress == null) {
-      return '进度: 未获取';
-    }
-    if (progress.error != null && progress.error!.isNotEmpty) {
-      return '进度获取失败: ${progress.error}';
-    }
-
-    final String latestCnTitle = (progress.latestAiredCnTitle ?? '').trim();
-    final String latestAtLabel = (progress.latestAiredAtLabel ?? '').trim();
-    final String latestText = progress.latestAiredEp != null
-        ? '，最新已放送 EP${progress.latestAiredEp}'
-              '${latestCnTitle.isNotEmpty ? '『$latestCnTitle』' : ''}'
-          '${latestAtLabel.isNotEmpty ? '（$latestAtLabel）' : ''}'
-        : '';
-    return '进度: ${progress.progressText ?? '未知'}$latestText';
-  }
-
-  
-  String _formatRatingBadge(SubjectProgress? progress) {
-    final double? score = progress?.ratingScore;
-    if (score == null || score <= 0) {
-      return '';
-    }
-    final String text = score.toStringAsFixed(1);
-    return '评分 $text';
-  }
-
   Future<void> _showSubjectDetail(SubjectItem item) async {
     if (item.subjectId.isEmpty) {
       _showStatus('条目 ID 为空');
@@ -3239,7 +2401,7 @@ class _BangumiHomePageState extends State<BangumiHomePage>
         borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
       ),
       builder: (BuildContext context) {
-        return _SubjectDetailBody(
+        return SubjectDetailSheet(
           subjectId: item.subjectId,
           item: item,
           service: _service,
@@ -3319,777 +2481,6 @@ class _BangumiHomePageState extends State<BangumiHomePage>
     return false;
   }
 
-  Widget _buildSubjectTile({
-    required SubjectItem item,
-    required int index,
-    required bool followed,
-    bool showCover = false,
-    double coverWidth = 54,
-    double coverHeight = 72,
-    bool showFollowedBadge = false,
-    bool highlightFollowed = false,
-    String updateWeekdayText = '',
-    String updateTimeText = '',
-    bool showRatingBadge = false,
-    bool showCommentChart = true,
-    bool showCommentTotalBadge = false,
-    VoidCallback? onToggleFollow,
-    VoidCallback? onAdjustProgress,
-  }) {
-    final ColorScheme colors = Theme.of(context).colorScheme;
-    final bool isDark = Theme.of(context).brightness == Brightness.dark;
-    final SubjectProgress? progress = _progressCache[item.subjectId];
-    final int totalCommentCount = progress == null
-        ? 0
-        : progress.episodeCommentCounts.fold<int>(
-            0,
-            (int sum, int value) => sum + value,
-          );
-    final String ratingText = showRatingBadge
-        ? _formatRatingBadge(progress)
-        : '';
-    final bool isHighRating = (progress?.ratingScore ?? 0) >= 7.5;
-    final String title = item.displayName.isNotEmpty
-        ? item.displayName
-        : item.subjectId;
-    final Color followedHighlightColor = isDark
-      ? colors.secondaryContainer.withValues(alpha: 0.45)
-      : const Color(0xFFFFF8D6);
-    final Color followedBadgeBg = isDark
-      ? colors.primaryContainer
-      : const Color(0xFFFFD54F);
-    final Color followedBadgeFg = isDark
-      ? colors.onPrimaryContainer
-      : const Color(0xFF5C3B00);
-    final Color weekdayBadgeBg = isDark
-      ? colors.tertiaryContainer
-      : const Color(0xFFE8F5E9);
-    final Color weekdayBadgeFg = isDark
-      ? colors.onTertiaryContainer
-      : const Color(0xFF1B5E20);
-    final Color timeBadgeBg = isDark
-      ? colors.secondaryContainer
-      : const Color(0xFFE3F2FD);
-    final Color timeBadgeFg = isDark
-      ? colors.onSecondaryContainer
-      : const Color(0xFF0D47A1);
-    final Color highRatingBadgeBg = isDark
-      ? colors.tertiaryContainer
-      : const Color(0xFFFFEB3B);
-    final Color highRatingBadgeFg = isDark
-      ? colors.onTertiaryContainer
-      : const Color(0xFFBF360C);
-    final Color normalRatingBadgeBg = isDark
-      ? colors.secondaryContainer
-      : const Color(0xFFFFF3E0);
-    final Color normalRatingBadgeFg = isDark
-      ? colors.onSecondaryContainer
-      : const Color(0xFFE65100);
-    final Color commentTotalBg = isDark
-      ? colors.surfaceContainerHighest
-      : const Color(0xFFF3F4F6);
-    final Color commentTotalBorder = isDark
-      ? colors.outlineVariant
-      : const Color(0xFFD1D5DB);
-    final Color commentTotalFg = isDark
-      ? colors.onSurfaceVariant
-      : const Color(0xFF374151);
-
-    return Card(
-      margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-      color: highlightFollowed && followed ? followedHighlightColor : null,
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: <Widget>[
-            if (showCover)
-              InkWell(
-                borderRadius: BorderRadius.circular(8),
-                onTap: () => _showSubjectDetail(item),
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(8),
-                  child: item.localCoverPath.isNotEmpty
-                      ? Image.file(
-                          File(item.localCoverPath),
-                          width: coverWidth,
-                          height: coverHeight,
-                          fit: BoxFit.cover,
-                          errorBuilder: (_, error, stackTrace) =>
-                              _buildCoverPlaceholder(
-                                width: coverWidth,
-                                height: coverHeight,
-                              ),
-                        )
-                      : item.coverUrl.isNotEmpty
-                      ? _buildCoverPlaceholder(
-                          width: coverWidth,
-                          height: coverHeight,
-                        )
-                      : _buildCoverPlaceholder(
-                          width: coverWidth,
-                          height: coverHeight,
-                        ),
-                ),
-              ),
-            if (showCover) const SizedBox(width: 12),
-            Expanded(
-              child: ConstrainedBox(
-                constraints: BoxConstraints(
-                  minHeight: showCover ? coverHeight : 0,
-                ),
-                child: Stack(
-                  clipBehavior: Clip.none,
-                  children: <Widget>[
-                    if (showCommentChart &&
-                        progress != null &&
-                        progress.error == null)
-                      Positioned.fill(
-                        child: LayoutBuilder(
-                          builder: (BuildContext context, BoxConstraints box) {
-                            final EpisodeCommentChartLayout baseLayout =
-                                _commentChartLayout;
-                            final double chartWidth = baseLayout.width
-                                .clamp(1.0, math.max(1.0, box.maxWidth))
-                                .toDouble();
-                            final double chartHeight = baseLayout.height
-                                .clamp(1.0, math.max(1.0, box.maxHeight))
-                                .toDouble();
-
-                            final double freeWidth = math.max(
-                              0,
-                              box.maxWidth - chartWidth,
-                            );
-                            final double freeHeight = math.max(
-                              0,
-                              box.maxHeight - chartHeight,
-                            );
-
-                            final double anchorLeft =
-                                ((baseLayout.alignment.x + 1) / 2) * freeWidth;
-                            final double anchorTop =
-                                ((baseLayout.alignment.y + 1) / 2) * freeHeight;
-
-                            final double minOffsetX = -anchorLeft;
-                            final double maxOffsetX = freeWidth - anchorLeft;
-                            final double minOffsetY = -anchorTop;
-                            final double maxOffsetY = freeHeight - anchorTop;
-
-                            final double effectiveOffsetX = baseLayout.offsetX
-                                .clamp(minOffsetX, maxOffsetX)
-                                .toDouble();
-                            final double effectiveOffsetY = baseLayout.offsetY
-                                .clamp(minOffsetY, maxOffsetY)
-                                .toDouble();
-
-                            final double chartLeft = anchorLeft +
-                                effectiveOffsetX;
-                            final double chartTop = anchorTop +
-                                effectiveOffsetY;
-
-                            return Stack(
-                              children: <Widget>[
-                                Positioned(
-                                  left: chartLeft,
-                                  top: chartTop,
-                                  width: chartWidth,
-                                  height: chartHeight,
-                                  child: _buildEpisodeCommentBarChart(
-                                    progress.episodeCommentCounts,
-                                    layout: EpisodeCommentChartLayout(
-                                      alignment: baseLayout.alignment,
-                                      offsetX: baseLayout.offsetX,
-                                      offsetY: baseLayout.offsetY,
-                                      width: chartWidth,
-                                      height: chartHeight,
-                                      headerHeight: baseLayout.headerHeight,
-                                      headerBottomGap:
-                                          baseLayout.headerBottomGap,
-                                      barGap: baseLayout.barGap,
-                                      minBarHeight: baseLayout.minBarHeight,
-                                      backgroundRadius:
-                                          baseLayout.backgroundRadius,
-                                      contentPaddingHorizontal:
-                                          baseLayout.contentPaddingHorizontal,
-                                      contentPaddingVertical:
-                                          baseLayout.contentPaddingVertical,
-                                        backgroundColor: colors.surface,
-                                        backgroundBorderColor:
-                                          colors.outlineVariant,
-                                    ),
-                                    subjectId: item.subjectId,
-                                    parentWidth: box.maxWidth,
-                                    parentHeight: box.maxHeight,
-                                    offsetMinX: minOffsetX,
-                                    offsetMaxX: maxOffsetX,
-                                    offsetMinY: minOffsetY,
-                                    offsetMaxY: maxOffsetY,
-                                    effectiveOffsetX: effectiveOffsetX,
-                                    effectiveOffsetY: effectiveOffsetY,
-                                  ),
-                                ),
-                              ],
-                            );
-                          },
-                        ),
-                      ),
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: <Widget>[
-                        Row(
-                          children: <Widget>[
-                            Expanded(
-                              child: Text(
-                                '$index. $title',
-                                style: Theme.of(context).textTheme.titleMedium,
-                              ),
-                            ),
-                            if (followed && showFollowedBadge)
-                              Container(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 8,
-                                  vertical: 2,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: followedBadgeBg,
-                                  borderRadius: BorderRadius.circular(999),
-                                ),
-                                child: Text(
-                                  '已关注',
-                                  style: Theme.of(context).textTheme.labelSmall
-                                      ?.copyWith(
-                                        color: followedBadgeFg,
-                                        fontWeight: FontWeight.w700,
-                                      ),
-                                ),
-                              ),
-                            if (updateWeekdayText.isNotEmpty) ...<Widget>[
-                              const SizedBox(width: 6),
-                              Container(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 8,
-                                  vertical: 2,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: weekdayBadgeBg,
-                                  borderRadius: BorderRadius.circular(999),
-                                ),
-                                child: Text(
-                                  updateWeekdayText,
-                                  style: Theme.of(context).textTheme.labelSmall
-                                      ?.copyWith(
-                                        color: weekdayBadgeFg,
-                                        fontWeight: FontWeight.w700,
-                                      ),
-                                ),
-                              ),
-                            ],
-                            if (updateTimeText.isNotEmpty) ...<Widget>[
-                              const SizedBox(width: 6),
-                              Container(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 8,
-                                  vertical: 2,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: timeBadgeBg,
-                                  borderRadius: BorderRadius.circular(999),
-                                ),
-                                child: Text(
-                                  updateTimeText,
-                                  style: Theme.of(context).textTheme.labelSmall
-                                      ?.copyWith(
-                                        color: timeBadgeFg,
-                                        fontWeight: FontWeight.w700,
-                                      ),
-                                ),
-                              ),
-                            ],
-                            if (ratingText.isNotEmpty) ...<Widget>[
-                              const SizedBox(width: 6),
-                              Container(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 8,
-                                  vertical: 2,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: isHighRating
-                                      ? highRatingBadgeBg
-                                      : normalRatingBadgeBg,
-                                  borderRadius: BorderRadius.circular(999),
-                                ),
-                                child: Text(
-                                  ratingText,
-                                  style: Theme.of(context).textTheme.labelSmall
-                                      ?.copyWith(
-                                        color: isHighRating
-                                            ? highRatingBadgeFg
-                                            : normalRatingBadgeFg,
-                                        fontWeight: FontWeight.w700,
-                                      ),
-                                ),
-                              ),
-                            ],
-                            if (onToggleFollow != null) ...<Widget>[
-                              const SizedBox(width: 6),
-                              IconButton(
-                                tooltip: followed ? '取消关注' : '关注',
-                                onPressed: onToggleFollow,
-                                icon: Icon(
-                                  followed
-                                      ? Icons.playlist_remove_outlined
-                                      : Icons.playlist_add_outlined,
-                                ),
-                              ),
-                            ],
-                          ],
-                        ),
-                        if (item.nameOrigin.isNotEmpty &&
-                            item.nameOrigin != title)
-                          Padding(
-                            padding: const EdgeInsets.only(top: 4),
-                            child: Text(
-                              '原名: ${item.nameOrigin}',
-                              style: Theme.of(context).textTheme.bodySmall
-                                  ?.copyWith(
-                                    color: colors.onSurfaceVariant,
-                                  ),
-                            ),
-                          ),
-                        const SizedBox(height: 6),
-                        Text(
-                          followed || progress != null
-                              ? _formatProgress(progress)
-                              : '进度: 未关注，不抓取',
-                        ),
-                        if (onAdjustProgress != null)
-                        Padding(
-                          padding: const EdgeInsets.only(top: 8), // 下移
-                          child: Align(
-                              alignment: Alignment.centerLeft,
-                              child: TextButton.icon(
-                                onPressed: onAdjustProgress,
-                                style: TextButton.styleFrom(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 8,
-                                    vertical: 2,
-                                  ),
-                                  minimumSize: const Size(0, 28),
-                                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                                  visualDensity: VisualDensity.compact,
-                                ),
-                                icon: const Icon(Icons.tune, size: 14),
-                                label: const Text('修正更新进度'),
-                              ),
-                            ),
-                        )
-                      ],
-                    ),
-                    if (showCommentTotalBadge)
-                      Positioned(
-                        right: 0,
-                        bottom: 0,
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 8,
-                            vertical: 3,
-                          ),
-                          decoration: BoxDecoration(
-                            color: commentTotalBg,
-                            borderRadius: BorderRadius.circular(999),
-                            border: Border.all(color: commentTotalBorder),
-                          ),
-                          child: Text(
-                            '总评 $totalCommentCount',
-                            style: Theme.of(context).textTheme.labelSmall
-                                ?.copyWith(
-                                  color: commentTotalFg,
-                                  fontWeight: FontWeight.w700,
-                                ),
-                          ),
-                        ),
-                      ),
-                  ],
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  
-  Widget _buildCoverPlaceholder({double width = 54, double height = 72}) {
-    return Container(
-      width: width,
-      height: height,
-      color: Theme.of(context).colorScheme.surfaceContainerHighest,
-      child: Icon(
-        Icons.movie_creation_outlined,
-        size: 18,
-        color: Theme.of(context).colorScheme.onSurfaceVariant,
-      ),
-    );
-  }
-
-  Widget _buildEpisodeCommentBarChart(
-    List<int> counts, {
-    required EpisodeCommentChartLayout layout,
-    required String subjectId,
-    required double parentWidth,
-    required double parentHeight,
-    required double offsetMinX,
-    required double offsetMaxX,
-    required double offsetMinY,
-    required double offsetMaxY,
-    required double effectiveOffsetX,
-    required double effectiveOffsetY,
-  }) {
-    final List<int> values = counts
-        .map((int value) => math.max(0, value))
-        .toList(growable: false);
-    final int maxCount = values.fold<int>(
-      0,
-      (int prev, int value) => math.max(prev, value),
-    );
-    final double barsHeight = math.max(
-      0,
-      layout.height - layout.headerHeight - layout.headerBottomGap,
-    );
-    final double barsWidth = math.max(
-      0,
-      layout.width - layout.contentPaddingHorizontal * 2,
-    );
-    final int barCount = values.length;
-
-    final ColorScheme colors = Theme.of(context).colorScheme;
-    final Color baseColor = colors.primary;
-
-    return MouseRegion(
-      opaque: true,
-      onExit: (_) {
-        if (_hoveredChartSubjectId != subjectId) {
-          return;
-        }
-        if (!mounted) {
-          return;
-        }
-        setState(() {
-          _hoveredChartSubjectId = null;
-          _hoveredChartBarIndex = null;
-          _debugHoverLocalX = null;
-          _debugHoverLocalY = null;
-          _debugHoverBarCount = null;
-        });
-      },
-      onHover: (event) {
-        final int localX = event.localPosition.dx.round();
-        final int localY = event.localPosition.dy.round();
-
-        int? index;
-        if (barCount > 0) {
-          final double barTop =
-              layout.contentPaddingVertical +
-              layout.headerHeight +
-              layout.headerBottomGap;
-          final double barBottom = barTop + barsHeight;
-          final bool insideBarRegion =
-              event.localPosition.dy >= barTop &&
-              event.localPosition.dy <= barBottom;
-
-          if (insideBarRegion) {
-            final double relativeX =
-                (event.localPosition.dx - layout.contentPaddingHorizontal)
-                    .clamp(0.0, barsWidth)
-                    .toDouble();
-            final double maxGapByWidth = barCount <= 1
-                ? 0
-                : barsWidth / (barCount * 2);
-            final double effectiveGap = math.min(layout.barGap, maxGapByWidth);
-            final double totalGapWidth = effectiveGap * (barCount - 1);
-            final double rawBarWidth = (barsWidth - totalGapWidth) / barCount;
-            final double barWidth = rawBarWidth.isFinite && rawBarWidth > 0
-                ? rawBarWidth
-                : 0;
-            final double step = barWidth + effectiveGap;
-
-            int computed = step <= 0 ? 0 : (relativeX / step).floor();
-            if (computed < 0) {
-              computed = 0;
-            }
-            if (computed >= barCount) {
-              computed = barCount - 1;
-            }
-            index = computed;
-          }
-        }
-
-        if (_hoveredChartSubjectId == subjectId &&
-            _hoveredChartBarIndex == index &&
-            _debugHoverLocalX == localX &&
-            _debugHoverLocalY == localY &&
-            _debugHoverBarCount == barCount) {
-          return;
-        }
-
-        if (!mounted) {
-          return;
-        }
-        setState(() {
-          _hoveredChartSubjectId = subjectId;
-          _hoveredChartBarIndex = index;
-          _debugHoverLocalX = localX;
-          _debugHoverLocalY = localY;
-          _debugHoverBarCount = barCount;
-        });
-      },
-      child: Container(
-        width: layout.width,
-        height: layout.height,
-        padding: EdgeInsets.symmetric(
-          horizontal: layout.contentPaddingHorizontal,
-          vertical: layout.contentPaddingVertical,
-        ),
-        decoration: BoxDecoration(
-          color: layout.backgroundColor,
-          borderRadius: BorderRadius.circular(layout.backgroundRadius),
-          border: Border.all(color: layout.backgroundBorderColor),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: <Widget>[
-            SizedBox(
-              height: layout.headerHeight,
-              child: Row(
-                children: <Widget>[
-                  Text('分集评论热度', style: Theme.of(context).textTheme.labelSmall),
-                  const Spacer(),
-                  Text(
-                    maxCount > 0 ? '峰值 $maxCount' : '峰值 -',
-                    style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                      color: Theme.of(context).colorScheme.onSurfaceVariant,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            SizedBox(height: layout.headerBottomGap),
-            Expanded(
-              child: LayoutBuilder(
-                builder: (BuildContext context, BoxConstraints constraints) {
-                  final double chartBarsHeight = math.max(
-                    0,
-                    constraints.maxHeight,
-                  );
-                  if (values.isEmpty) {
-                    return Align(
-                      alignment: Alignment.bottomCenter,
-                      child: Container(
-                        width: constraints.maxWidth,
-                        height: layout.minBarHeight,
-                        decoration: BoxDecoration(
-                          color: baseColor.withValues(alpha: 0.08),
-                          borderRadius: BorderRadius.circular(2),
-                        ),
-                      ),
-                    );
-                  }
-
-                  final int barCount = values.length;
-                  final double maxGapByWidth = barCount <= 1
-                      ? 0
-                      : constraints.maxWidth / (barCount * 2);
-                  final double effectiveGap = math.min(
-                    layout.barGap,
-                    maxGapByWidth,
-                  );
-                  final double totalGapWidth = effectiveGap * (barCount - 1);
-                  final double rawBarWidth =
-                      (constraints.maxWidth - totalGapWidth) / barCount;
-                  final double barWidth =
-                      rawBarWidth.isFinite && rawBarWidth > 0 ? rawBarWidth : 0;
-
-                  final int? hoveredIndex = _hoveredChartSubjectId == subjectId
-                      ? _hoveredChartBarIndex
-                      : null;
-                  final int? debugLocalX = _hoveredChartSubjectId == subjectId
-                      ? _debugHoverLocalX
-                      : null;
-                  final int? debugLocalY = _hoveredChartSubjectId == subjectId
-                      ? _debugHoverLocalY
-                      : null;
-                  final int? debugBarCount = _hoveredChartSubjectId == subjectId
-                      ? _debugHoverBarCount
-                      : null;
-
-                  return Stack(
-                    clipBehavior: Clip.none,
-                    children: <Widget>[
-                      Row(
-                        crossAxisAlignment: CrossAxisAlignment.end,
-                        children: List<Widget>.generate(barCount, (int i) {
-                          final int value = values[i];
-                          final double ratio = maxCount <= 0
-                              ? 0.08
-                              : value <= 0
-                              ? 0.08
-                              : value / maxCount;
-                          final Color color =
-                              Color.lerp(
-                                baseColor.withValues(alpha: 0.25),
-                                baseColor,
-                                ratio.clamp(0.0, 1.0),
-                              ) ??
-                              baseColor;
-                          final double cellWidth =
-                              barWidth + (i == barCount - 1 ? 0 : effectiveGap);
-
-                          return SizedBox(
-                            width: cellWidth,
-                            height: chartBarsHeight,
-                            child: Align(
-                              alignment: Alignment.bottomCenter,
-                              child: Container(
-                                width: barWidth,
-                                height: math.max(
-                                  layout.minBarHeight,
-                                  chartBarsHeight * ratio,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: color,
-                                  borderRadius: BorderRadius.circular(2),
-                                ),
-                              ),
-                            ),
-                          );
-                        }),
-                      ),
-                      if (_debugShowChartHoverHitArea)
-                        Positioned.fill(
-                          child: IgnorePointer(
-                            child: Row(
-                              crossAxisAlignment: CrossAxisAlignment.stretch,
-                              children: List<Widget>.generate(barCount, (
-                                int i,
-                              ) {
-                                final double cellWidth =
-                                    barWidth +
-                                    (i == barCount - 1 ? 0 : effectiveGap);
-                                final bool active = hoveredIndex == i;
-
-                                return SizedBox(
-                                  width: cellWidth,
-                                  child: Container(
-                                    decoration: BoxDecoration(
-                                      color: active
-                                          ? colors.primary.withValues(alpha: 0.33)
-                                          : colors.secondary.withValues(alpha: 0.14),
-                                      border: Border.all(
-                                        color: active
-                                            ? colors.primary
-                                            : colors.secondary.withValues(
-                                                alpha: 0.72,
-                                              ),
-                                        width: active ? 1.2 : 0.8,
-                                      ),
-                                    ),
-                                  ),
-                                );
-                              }),
-                            ),
-                          ),
-                        ),
-                      if (hoveredIndex != null &&
-                          hoveredIndex >= 0 &&
-                          hoveredIndex < barCount)
-                        Positioned(
-                          top: -24,
-                          left: (() {
-                            final double step = barWidth + effectiveGap;
-                            final double center =
-                                hoveredIndex * step + barWidth / 2;
-                            const double labelWidth = 76;
-                            final double maxLeft = math
-                                .max(0.0, constraints.maxWidth - labelWidth)
-                                .toDouble();
-                            return (center - labelWidth / 2)
-                                .clamp(0.0, maxLeft)
-                                .toDouble();
-                          })(),
-                          child: IgnorePointer(
-                            child: Container(
-                              width: 76,
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 8,
-                                vertical: 4,
-                              ),
-                              decoration: BoxDecoration(
-                                color: colors.inverseSurface,
-                                borderRadius: BorderRadius.circular(6),
-                              ),
-                              child: Text(
-                                '评论 ${values[hoveredIndex]}',
-                                textAlign: TextAlign.center,
-                                style: Theme.of(context).textTheme.labelSmall
-                                    ?.copyWith(
-                                      color: colors.onInverseSurface,
-                                      fontWeight: FontWeight.w600,
-                                    ),
-                              ),
-                            ),
-                          ),
-                        ),
-                      if (_debugShowChartHoverHitArea)
-                        Positioned(
-                          left: 2,
-                          bottom: 2,
-                          child: IgnorePointer(
-                            child: Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 6,
-                                vertical: 3,
-                              ),
-                              decoration: BoxDecoration(
-                                color: colors.inverseSurface.withValues(
-                                  alpha: 0.86,
-                                ),
-                                borderRadius: BorderRadius.circular(4),
-                              ),
-                              child: Text(
-                                'x:${debugLocalX ?? '-'} y:${debugLocalY ?? '-'} '
-                                'idx:${hoveredIndex ?? '-'} n:${debugBarCount ?? barCount}\n'
-                                'Pw:${parentWidth.toStringAsFixed(1)} '
-                                'Ph:${parentHeight.toStringAsFixed(1)}\n'
-                                'W:${layout.width.toStringAsFixed(1)} '
-                                'H:${layout.height.toStringAsFixed(1)}\n'
-                                'offX[${offsetMinX.toStringAsFixed(1)},${offsetMaxX.toStringAsFixed(1)}] '
-                                'cur:${layout.offsetX.toStringAsFixed(1)} '
-                                'applied:${effectiveOffsetX.toStringAsFixed(1)}\n'
-                                'offY(bottom)[${offsetMinY.toStringAsFixed(1)},${offsetMaxY.toStringAsFixed(1)}] '
-                                'cur:${layout.offsetY.toStringAsFixed(1)} '
-                                'applied:${effectiveOffsetY.toStringAsFixed(1)}',
-                                style: Theme.of(context).textTheme.labelSmall
-                                    ?.copyWith(
-                                      color: colors.onInverseSurface,
-                                      fontWeight: FontWeight.w600,
-                                    ),
-                              ),
-                            ),
-                          ),
-                        ),
-                    ],
-                  );
-                },
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  
   Widget _buildNetworkActivityIndicator() {
     if (!_showNetworkIndicator) {
       return const SizedBox.shrink();
@@ -4280,95 +2671,6 @@ class _BangumiHomePageState extends State<BangumiHomePage>
   }
 
   
-  Widget _buildTodayTab() {
-    if (_isLoadingSchedule) {
-      return const Center(child: CircularProgressIndicator());
-    }
-    if (_scheduleError.isNotEmpty) {
-      return Center(child: Text('获取失败: $_scheduleError'));
-    }
-
-    final Set<String> watchIds = _watchlist
-        .map((SubjectItem item) => item.subjectId)
-        .toSet();
-    final List<SubjectItem> followedItems = _todayItems
-        .where((SubjectItem item) => watchIds.contains(item.subjectId))
-        .toList();
-    final List<SubjectItem> unfollowedItems = _todayItems
-        .where((SubjectItem item) => !watchIds.contains(item.subjectId))
-        .toList();
-
-    
-    int compareByUpdateTime(SubjectItem a, SubjectItem b) {
-      final int aMinutes = _parseUpdateTimeMinutes(a.updateTime);
-      final int bMinutes = _parseUpdateTimeMinutes(b.updateTime);
-      final int timeCompare = aMinutes.compareTo(bMinutes);
-      if (timeCompare != 0) {
-        return timeCompare;
-      }
-
-      final String aName = a.displayName.isNotEmpty
-          ? a.displayName
-          : a.subjectId;
-      final String bName = b.displayName.isNotEmpty
-          ? b.displayName
-          : b.subjectId;
-      return aName.toLowerCase().compareTo(bName.toLowerCase());
-    }
-
-    followedItems.sort(compareByUpdateTime);
-    unfollowedItems.sort(compareByUpdateTime);
-
-    final List<SubjectItem> displayItems = <SubjectItem>[
-      ...followedItems,
-      ...unfollowedItems,
-    ];
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: <Widget>[
-        Padding(
-          padding: const EdgeInsets.fromLTRB(12, 12, 12, 6),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: <Widget>[
-              Text('今天是 $_effectiveTodayWeekday，今日更新 ${_todayItems.length} 部。'),
-              Text('当前时区: $_currentTimezoneFullLabel'),
-              const SizedBox(height: 4),
-            ],
-          ),
-        ),
-        Expanded(
-          child: displayItems.isEmpty
-              ? const Center(child: Text('今日无数据'))
-              : ListView.builder(
-                  padding: const EdgeInsets.only(bottom: 96),
-                  itemCount: displayItems.length,
-                  itemBuilder: (BuildContext context, int index) {
-                    final SubjectItem item = displayItems[index];
-                    final bool followed = watchIds.contains(item.subjectId);
-                    return _buildSubjectTile(
-                      item: item,
-                      index: index + 1,
-                      followed: followed,
-                      showCover: true,
-                      coverWidth: 72,
-                      coverHeight: 96,
-                      showFollowedBadge: true,
-                      highlightFollowed: true,
-                      updateTimeText: item.updateTime,
-                      showRatingBadge: true,
-                      showCommentChart: false,
-                      showCommentTotalBadge: true,
-                      onToggleFollow: () => _toggleWatchFromToday(item),
-                    );
-                  },
-                ),
-        ),
-      ],
-    );
-  }
-
   Future<void> _toggleWatchFromToday(SubjectItem item) async {
     final bool alreadyFollowed = _watchlist.any(
       (SubjectItem x) => x.subjectId == item.subjectId,
@@ -4555,805 +2857,6 @@ class _BangumiHomePageState extends State<BangumiHomePage>
   }
 
   
-  Widget _buildWatchTab() {
-    final Map<String, String> weekdayBySubjectId = <String, String>{};
-    final Map<String, String> updateTimeBySubjectId = <String, String>{};
-
-    for (final DaySchedule day in _scheduleData) {
-      for (final SubjectItem item in day.items) {
-        if (item.subjectId.isEmpty) {
-          continue;
-        }
-        if (!weekdayBySubjectId.containsKey(item.subjectId)) {
-          weekdayBySubjectId[item.subjectId] = day.weekday;
-        }
-        if (item.updateTime.isNotEmpty &&
-            !updateTimeBySubjectId.containsKey(item.subjectId)) {
-          updateTimeBySubjectId[item.subjectId] = item.updateTime;
-        }
-      }
-    }
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: <Widget>[
-        Padding(
-          padding: const EdgeInsets.fromLTRB(12, 12, 12, 6),
-          child: Text('关注番剧共 ${_watchlist.length} 部（$_currentTimezoneFullLabel）。'),
-        ),
-        Expanded(
-          child: _watchlist.isEmpty
-              ? const Center(child: Text('当前没有关注番剧'))
-              : ListView.builder(
-                  padding: const EdgeInsets.only(bottom: 96),
-                  itemCount: _watchlist.length,
-                  itemBuilder: (BuildContext context, int index) {
-                    final SubjectItem item = _watchlist[index];
-                    final String weekdayText =
-                        weekdayBySubjectId[item.subjectId] ?? '';
-                    final String timeText =
-                        updateTimeBySubjectId[item.subjectId] ??
-                        item.updateTime;
-                    return _buildSubjectTile(
-                      item: item,
-                      index: index + 1,
-                      followed: true,
-                      showCover: true,
-                      coverWidth: 72,
-                      coverHeight: 96,
-                      showFollowedBadge: false,
-                      updateWeekdayText: weekdayText,
-                      updateTimeText: timeText,
-                      showRatingBadge: true,
-                      onAdjustProgress: () => _openProgressAdjustDialog(item),
-                    );
-                  },
-                ),
-        ),
-      ],
-    );
-  }
-
-  
-  Future<void> _performSearch(String keyword) async {
-    if (keyword.trim().isEmpty) return;
-    setState(() {
-      _isSearching = true;
-      _searchError = '';
-      _allSearchResults = <SearchSubjectResult>[];
-      _searchTotalResults = 0;
-      _currentSearchPage = 0;
-    });
-
-    try {
-      const int pageSize = 20;
-      final List<SearchSubjectResult> allResults = <SearchSubjectResult>[];
-      final Set<String> seenIds = <String>{};
-
-      // Fetch first page (up to 20 results).
-      final SearchSubjectsResponse response =
-          await _service.searchSubjects(keyword, limit: pageSize, offset: 0);
-      int total = response.total;
-
-      for (final SearchSubjectResult r in response.results) {
-        if (seenIds.add(r.subject.subjectId)) {
-          allResults.add(r);
-        }
-      }
-
-      // Fetch remaining pages concurrently (up to max 200 results).
-      if (total > pageSize) {
-        final int maxOffset = math.min(total, 200);
-        final List<Future<SearchSubjectsResponse>> pending =
-            <Future<SearchSubjectsResponse>>[];
-        for (int offset = pageSize; offset < maxOffset; offset += pageSize) {
-          pending.add(_service.searchSubjects(
-            keyword,
-            limit: pageSize,
-            offset: offset,
-          ));
-        }
-        final List<SearchSubjectsResponse> rest = await Future.wait(pending);
-        for (final SearchSubjectsResponse page in rest) {
-          for (final SearchSubjectResult r in page.results) {
-            if (seenIds.add(r.subject.subjectId)) {
-              allResults.add(r);
-            }
-          }
-        }
-      }
-
-      // Sort by popularity desc, then ratingScore desc
-      allResults.sort((SearchSubjectResult a, SearchSubjectResult b) {
-        final int popCmp = b.popularity.compareTo(a.popularity);
-        if (popCmp != 0) return popCmp;
-        final double aScore = a.ratingScore ?? 0;
-        final double bScore = b.ratingScore ?? 0;
-        return bScore.compareTo(aScore);
-      });
-
-      if (!mounted) return;
-      setState(() {
-        _allSearchResults = allResults;
-        _searchTotalResults = allResults.length;
-        _isSearching = false;
-      });
-
-      // Cache covers through BangumiService (uses Clash proxy).
-      // Image.network bypasses the proxy, so we download via
-      // the service and display from local files.
-      _cacheSearchResultCovers();
-    } catch (e) {
-      if (!mounted) return;
-      setState(() {
-        _isSearching = false;
-        _searchError = '搜索失败：$e';
-      });
-    }
-  }
-
-  Future<void> _cacheSearchResultCovers() async {
-    for (final SearchSubjectResult r in _allSearchResults) {
-      final String id = r.subject.subjectId;
-      if (id.isEmpty || r.subject.coverUrl.isEmpty) continue;
-      if (_searchCoverPaths.containsKey(id)) continue;
-      try {
-        final String? path = await _coverCacheManager.ensureCached(
-          subjectId: id,
-          imageUrl: r.subject.coverUrl,
-          fetch: (String url) => _service.fetchImageWithRetry(
-            url,
-            purpose: '搜索结果封面缓存',
-          ),
-        ).timeout(const Duration(seconds: 12));
-        if (path != null && mounted) {
-          setState(() {
-            _searchCoverPaths[id] = path;
-          });
-        }
-      } catch (_) {}
-    }
-  }
-
-  Widget _buildSearchResultCover(SubjectItem item) {
-    final String? cached = _searchCoverPaths[item.subjectId];
-    if (cached != null && File(cached).existsSync()) {
-      return Image.file(
-        File(cached),
-        width: 72,
-        height: 96,
-        fit: BoxFit.cover,
-        errorBuilder: (_, _, _) =>
-            _buildCoverPlaceholder(width: 72, height: 96),
-      );
-    }
-    // Image.network doesn't go through the Clash proxy, so it can't reach
-    // lain.bgm.tv directly. Show placeholder — cache will fill via
-    // _cacheSearchResultCovers() and trigger a rebuild.
-    return _buildCoverPlaceholder(width: 72, height: 96);
-  }
-
-  Widget _buildBadge(String text, {bool isHighRating = false}) {
-    final ColorScheme colors = Theme.of(context).colorScheme;
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-      decoration: BoxDecoration(
-        color: isHighRating
-            ? colors.tertiaryContainer
-            : colors.secondaryContainer,
-        borderRadius: BorderRadius.circular(4),
-      ),
-      child: Text(
-        text,
-        style: TextStyle(
-          fontSize: 11,
-          color: isHighRating
-              ? colors.onTertiaryContainer
-              : colors.onSecondaryContainer,
-        ),
-      ),
-    );
-  }
-
-  Widget _buildSearchResultTile(SearchSubjectResult result) {
-    final ColorScheme colors = Theme.of(context).colorScheme;
-    final SubjectItem item = result.subject;
-    final bool isFollowed = _watchlist
-        .any((SubjectItem x) => x.subjectId == item.subjectId);
-    final String title =
-        item.displayName.isNotEmpty ? item.displayName : item.subjectId;
-    final String subtitle = item.nameOrigin.isNotEmpty &&
-            item.nameOrigin != item.displayName
-        ? item.nameOrigin
-        : '';
-
-    return Card(
-      margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: <Widget>[
-            // Cover image (72x96)
-            InkWell(
-              borderRadius: BorderRadius.circular(8),
-              onTap: () => _showSubjectDetail(item),
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(8),
-                child: item.coverUrl.isNotEmpty
-                    ? _buildSearchResultCover(item)
-                    : _buildCoverPlaceholder(width: 72, height: 96),
-              ),
-            ),
-            const SizedBox(width: 12),
-            // Title + badges
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: <Widget>[
-                  GestureDetector(
-                    onTap: () => _showSubjectDetail(item),
-                    child: Text(
-                      title,
-                      style: Theme.of(context)
-                          .textTheme
-                          .titleSmall
-                          ?.copyWith(fontWeight: FontWeight.bold),
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ),
-                  if (subtitle.isNotEmpty) ...[
-                    const SizedBox(height: 2),
-                    Text(
-                      subtitle,
-                      style: Theme.of(context)
-                          .textTheme
-                          .bodySmall
-                          ?.copyWith(color: colors.onSurfaceVariant),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ],
-                  const SizedBox(height: 8),
-                  Wrap(
-                    spacing: 6,
-                    runSpacing: 4,
-                    children: <Widget>[
-                      if (result.ratingScore != null &&
-                          result.ratingScore! > 0)
-                        _buildBadge(
-                          '评分 ${result.ratingScore!.toStringAsFixed(1)}',
-                          isHighRating: result.ratingScore! >= 7.5,
-                        ),
-                      if (result.airDate.isNotEmpty)
-                        _buildBadge(result.airDate),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-            // Follow/unfollow button
-            const SizedBox(width: 4),
-            Column(
-              mainAxisSize: MainAxisSize.min,
-              children: <Widget>[
-                IconButton(
-                  icon: Icon(
-                    isFollowed ? Icons.star : Icons.star_border,
-                    color: isFollowed ? Colors.amber : null,
-                  ),
-                  tooltip: isFollowed ? '取消关注' : '关注',
-                  onPressed: () => _toggleWatchFromToday(item),
-                ),
-              ],
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildSelectTab() {
-    const int pageSize = 10;
-    final int totalPages = _allSearchResults.isEmpty
-        ? 0
-        : (_allSearchResults.length + pageSize - 1) ~/ pageSize;
-    final int pageStart = _currentSearchPage * pageSize;
-    final int pageEnd = (pageStart + pageSize).clamp(0, _allSearchResults.length);
-    final List<SearchSubjectResult> pageItems = pageStart < _allSearchResults.length
-        ? _allSearchResults.sublist(pageStart, pageEnd)
-        : <SearchSubjectResult>[];
-
-    return Column(
-      children: <Widget>[
-        Padding(
-          padding: const EdgeInsets.fromLTRB(12, 12, 12, 6),
-          child: TextField(
-            controller: _searchController,
-            textInputAction: TextInputAction.search,
-            decoration: InputDecoration(
-              labelText: '搜索番剧',
-              hintText: '输入番剧日文名或中文名',
-              suffixIcon: IconButton(
-                icon: const Icon(Icons.search),
-                onPressed: () =>
-                    _performSearch(_searchController.text.trim()),
-              ),
-              border: const OutlineInputBorder(),
-            ),
-            onChanged: (value) {
-              if (value.trim().isEmpty) {
-                setState(() {
-                  _allSearchResults = <SearchSubjectResult>[];
-                  _searchTotalResults = 0;
-                  _searchError = '';
-                  _currentSearchPage = 0;
-                });
-              }
-            },
-            onSubmitted: (value) {
-              if (value.trim().isNotEmpty) _performSearch(value.trim());
-            },
-          ),
-        ),
-        if (!_isSearching &&
-            _searchError.isEmpty &&
-            _allSearchResults.isNotEmpty)
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-            child: Align(
-              alignment: Alignment.centerLeft,
-              child: Text(
-                '共 $_searchTotalResults 条结果（按热度排序）',
-                style: Theme.of(context)
-                    .textTheme
-                    .bodySmall
-                    ?.copyWith(
-                        color: Theme.of(context)
-                            .colorScheme
-                            .onSurfaceVariant),
-              ),
-            ),
-          ),
-        if (_searchError.isNotEmpty)
-          Padding(
-            padding: const EdgeInsets.all(16),
-            child: Text(
-              _searchError,
-              style:
-                  TextStyle(color: Theme.of(context).colorScheme.error),
-            ),
-          ),
-        if (_isSearching)
-          const Expanded(
-            child: Center(child: CircularProgressIndicator()),
-          ),
-        if (!_isSearching && _searchError.isEmpty)
-          Expanded(
-            child: _allSearchResults.isEmpty
-                ? const Center(child: Text('输入关键词搜索番剧'))
-                : ListView.builder(
-                    padding: const EdgeInsets.only(bottom: 96),
-                    itemCount: pageItems.length + 1, // +1 for pagination row
-                    itemBuilder: (BuildContext context, int index) {
-                      if (index < pageItems.length) {
-                        return _buildSearchResultTile(pageItems[index]);
-                      }
-                      // Pagination footer
-                      return Padding(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 12, vertical: 12),
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: <Widget>[
-                            FilledButton.tonal(
-                              onPressed: _currentSearchPage > 0
-                                  ? () => setState(() =>
-                                        _currentSearchPage--)
-                                  : null,
-                              child: const Text('上一页'),
-                            ),
-                            const SizedBox(width: 16),
-                            Text(
-                              '${_currentSearchPage + 1} / $totalPages 页',
-                              style: Theme.of(context)
-                                  .textTheme
-                                  .bodyMedium,
-                            ),
-                            const SizedBox(width: 16),
-                            FilledButton.tonal(
-                              onPressed: _currentSearchPage + 1 < totalPages
-                                  ? () => setState(() =>
-                                        _currentSearchPage++)
-                                  : null,
-                              child: const Text('下一页'),
-                            ),
-                          ],
-                        ),
-                      );
-                    },
-                  ),
-          ),
-      ],
-    );
-  }
-
-  
-  int _parseUpdateTimeMinutes(String text) {
-    final RegExpMatch? match = RegExp(r'^(\d{1,2}):(\d{2})$').firstMatch(text);
-    if (match == null) {
-      return 24 * 60 + 1;
-    }
-
-    final int hour = int.tryParse(match.group(1) ?? '') ?? 99;
-    final int minute = int.tryParse(match.group(2) ?? '') ?? 99;
-    if (hour < 0 || hour > 29 || minute < 0 || minute > 59) {
-      return 24 * 60 + 1;
-    }
-    return hour * 60 + minute;
-  }
-
-  Widget _buildWeekCalendarEntry({
-    required SubjectItem item,
-    required bool followed,
-  }) {
-    final String title = item.displayName.isNotEmpty
-        ? item.displayName
-        : (item.nameOrigin.isNotEmpty ? item.nameOrigin : item.subjectId);
-    final String timeText = item.updateTime;
-    final ColorScheme colors = Theme.of(context).colorScheme;
-    final bool canToggleFollow = item.subjectId.isNotEmpty;
-
-    return Container(
-      width: 108,
-      margin: const EdgeInsets.only(bottom: 12),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: <Widget>[
-          GestureDetector(
-            onTap: () => _showSubjectDetail(item),
-            child: Container(
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(10),
-                border: Border.all(color: colors.outlineVariant),
-              ),
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(10),
-                child: Stack(
-                  children: <Widget>[
-                    item.localCoverPath.isNotEmpty
-                        ? Image.file(
-                            File(item.localCoverPath),
-                            width: 108,
-                            height: 146,
-                            fit: BoxFit.cover,
-                            errorBuilder: (_, error, stackTrace) =>
-                                _buildWeekCalendarPlaceholder(),
-                          )
-                        : item.coverUrl.isNotEmpty
-                        ? _buildWeekCalendarPlaceholder()
-                        : _buildWeekCalendarPlaceholder(),
-                    Positioned.fill(
-                      child: DecoratedBox(
-                        decoration: BoxDecoration(
-                          gradient: LinearGradient(
-                            begin: Alignment.topCenter,
-                            end: Alignment.bottomCenter,
-                            colors: <Color>[
-                              Colors.transparent,
-                              Colors.transparent,
-                              colors.scrim.withValues(alpha: 0.28),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ),
-                    if (timeText.isNotEmpty)
-                      Positioned(
-                        right: 6,
-                        bottom: 6,
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 7,
-                            vertical: 2,
-                          ),
-                          decoration: BoxDecoration(
-                            color: colors.primary.withValues(alpha: 0.9),
-                            borderRadius: BorderRadius.circular(999),
-                          ),
-                          child: Text(
-                            timeText,
-                            style: Theme.of(context).textTheme.labelSmall
-                                ?.copyWith(
-                                  color: colors.onPrimary,
-                                  fontWeight: FontWeight.w700,
-                                ),
-                          ),
-                        ),
-                      ),
-                    if (canToggleFollow)
-                      Positioned(
-                        top: 6,
-                        right: 6,
-                        child: Material(
-                          color: colors.surfaceContainerHigh.withValues(
-                            alpha: 0.76,
-                          ),
-                          borderRadius: BorderRadius.circular(999),
-                          child: InkWell(
-                            borderRadius: BorderRadius.circular(999),
-                            onTap: () => _toggleWatchFromToday(item),
-                            child: Padding(
-                              padding: const EdgeInsets.all(4),
-                              child: Icon(
-                                followed
-                                    ? Icons.playlist_remove_outlined
-                                    : Icons.playlist_add_outlined,
-                                size: 16,
-                                color: colors.onSurface,
-                              ),
-                            ),
-                          ),
-                        ),
-                      ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-          const SizedBox(height: 6),
-          Text(
-            title,
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
-            style: Theme.of(context).textTheme.bodySmall,
-          ),
-        ],
-      ),
-    );
-  }
-
-  
-  Widget _buildWeekCalendarPlaceholder() {
-    return Container(
-      width: 108,
-      height: 146,
-      color: Theme.of(context).colorScheme.surfaceContainerHighest,
-      child: Icon(
-        Icons.movie_creation_outlined,
-        size: 22,
-        color: Theme.of(context).colorScheme.onSurfaceVariant,
-      ),
-    );
-  }
-
-  
-  Widget _buildWeekCalendarTab() {
-    final ColorScheme colors = Theme.of(context).colorScheme;
-    final Set<String> watchIds = _watchlist
-        .map((SubjectItem item) => item.subjectId)
-        .where((String id) => id.isNotEmpty)
-        .toSet();
-    final Map<String, SubjectItem> watchById = <String, SubjectItem>{
-      for (final SubjectItem item in _watchlist)
-        if (item.subjectId.isNotEmpty) item.subjectId: item,
-    };
-
-    final List<String> orderedWeekdays = <String>[
-      '星期一',
-      '星期二',
-      '星期三',
-      '星期四',
-      '星期五',
-      '星期六',
-      '星期日',
-    ];
-    final DateTime now = DateTime.now();
-    final String todayWeekday = weekdayMap[now.weekday] ?? '';
-
-    final Map<String, List<SubjectItem>> grouped = <String, List<SubjectItem>>{
-      for (final String day in orderedWeekdays) day: <SubjectItem>[],
-    };
-
-    for (final DaySchedule day in _scheduleData) {
-      final String weekday = day.weekday;
-      if (!grouped.containsKey(weekday)) {
-        continue;
-      }
-
-      for (final SubjectItem item in day.items) {
-        if (!_weekCalendarShowAll && !watchIds.contains(item.subjectId)) {
-          continue;
-        }
-        final SubjectItem? fromWatch = watchById[item.subjectId];
-        grouped[weekday]!.add(
-          item.copyWith(
-            coverUrl: item.coverUrl.isNotEmpty
-                ? item.coverUrl
-                : (fromWatch?.coverUrl ?? ''),
-            localCoverPath: fromWatch?.localCoverPath ?? item.localCoverPath,
-            updateTime: item.updateTime.isNotEmpty
-                ? item.updateTime
-                : (fromWatch?.updateTime ?? ''),
-          ),
-        );
-      }
-    }
-
-    for (final String day in orderedWeekdays) {
-      grouped[day]!.sort((SubjectItem a, SubjectItem b) {
-        final int t1 = _parseUpdateTimeMinutes(a.updateTime);
-        final int t2 = _parseUpdateTimeMinutes(b.updateTime);
-        if (t1 != t2) {
-          return t1.compareTo(t2);
-        }
-        return a.displayName.compareTo(b.displayName);
-      });
-    }
-
-    final int totalCount = grouped.values.fold<int>(
-      0,
-      (int sum, List<SubjectItem> items) => sum + items.length,
-    );
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: <Widget>[
-        Padding(
-          padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
-          child: Row(
-            children: <Widget>[
-              Switch(
-                value: _weekCalendarShowAll,
-                onChanged: (bool value) {
-                  setState(() {
-                    _weekCalendarShowAll = value;
-                  });
-                },
-              ),
-              const SizedBox(width: 8),
-              Text(
-                '${_weekCalendarShowAll ? '全量显示' : '已关注'}（$_currentTimezoneFullLabel）',
-              ),
-            ],
-          ),
-        ),
-        Expanded(
-          child: totalCount == 0
-              ? Center(
-                  child: Text(
-                    _weekCalendarShowAll
-                        ? '周历暂无可展示数据，请先刷新日历'
-                        : watchIds.isEmpty
-                        ? '当前没有关注番剧，可打开全量显示查看全部'
-                        : '关注周历暂无可展示数据，请先刷新日历',
-                  ),
-                )
-              : LayoutBuilder(
-                  builder: (BuildContext context, BoxConstraints constraints) {
-                    const double columnWidth = 124;
-                    const double dividerWidth = 1;
-                    const double sidePadding = 12;
-                    final double contentWidth =
-                        orderedWeekdays.length * columnWidth +
-                        (orderedWeekdays.length + 1) * dividerWidth;
-                    final double viewportWidth = math.max(
-                      0,
-                      constraints.maxWidth - sidePadding * 2,
-                    );
-
-                    return SingleChildScrollView(
-                      padding: const EdgeInsets.only(bottom: 12),
-                      child: ConstrainedBox(
-                        constraints: BoxConstraints(
-                          minHeight: constraints.maxHeight,
-                        ),
-                        child: SingleChildScrollView(
-                          scrollDirection: Axis.horizontal,
-                          padding: const EdgeInsets.fromLTRB(12, 6, 12, 12),
-                          child: SizedBox(
-                            width: math.max(contentWidth, viewportWidth),
-                            child: IntrinsicHeight(
-                              child: Row(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: List<Widget>.generate(
-                                  orderedWeekdays.length * 2 + 1,
-                                  (int i) {
-                                    if (i.isEven) {
-                                      return Container(
-                                        width: dividerWidth,
-                                        color: colors.outlineVariant,
-                                      );
-                                    }
-
-                                    final int index = (i - 1) ~/ 2;
-                                    final String day = orderedWeekdays[index];
-                                    final List<SubjectItem> items =
-                                        grouped[day]!;
-                                    final bool isTodayColumn =
-                                        day == todayWeekday;
-
-                                    return SizedBox(
-                                      width: columnWidth,
-                                      child: Padding(
-                                        padding: const EdgeInsets.fromLTRB(
-                                          10,
-                                          8,
-                                          10,
-                                          8,
-                                        ),
-                                        child: Column(
-                                          crossAxisAlignment:
-                                              CrossAxisAlignment.start,
-                                          children: <Widget>[
-                                            Text(
-                                              day,
-                                              style: Theme.of(context)
-                                                  .textTheme
-                                                  .titleSmall
-                                                  ?.copyWith(
-                                                    fontWeight:
-                                                        FontWeight.w700,
-                                                    color: isTodayColumn
-                                                        ? colors.primary
-                                                        : colors.onSurface,
-                                                  ),
-                                            ),
-                                            const SizedBox(height: 2),
-                                            Text(
-                                              '${items.length} 部',
-                                              style: Theme.of(context)
-                                                  .textTheme
-                                                  .labelSmall
-                                                  ?.copyWith(
-                                                    color:
-                                                        colors.onSurfaceVariant,
-                                                  ),
-                                            ),
-                                            const SizedBox(height: 8),
-                                            if (items.isEmpty)
-                                              Text(
-                                                '暂无更新',
-                                                style: Theme.of(context)
-                                                    .textTheme
-                                                    .bodySmall
-                                                    ?.copyWith(
-                                                      color: colors
-                                                          .onSurfaceVariant,
-                                                    ),
-                                              )
-                                            else
-                                              ...items.map((
-                                                SubjectItem entry,
-                                              ) {
-                                                final bool followed = watchIds
-                                                    .contains(entry.subjectId);
-                                                return _buildWeekCalendarEntry(
-                                                  item: entry,
-                                                  followed: followed,
-                                                );
-                                              }),
-                                          ],
-                                        ),
-                                      ),
-                                    );
-                                  },
-                                ),
-                              ),
-                            ),
-                          ),
-                        ),
-                      ),
-                    );
-                  },
-                ),
-        ),
-      ],
-    );
-  }
-
   @override
   /// 构建当前组件的界面结构。
   Widget build(BuildContext context) {
@@ -5399,13 +2902,55 @@ class _BangumiHomePageState extends State<BangumiHomePage>
                 children: <Widget>[
                   TabBarView(
                     children: <Widget>[
-                      _buildTodayTab(),
-                      _buildWatchTab(),
-                      _buildWeekCalendarTab(),
-                      _buildSelectTab(),
+                      TodayTab(
+                        isLoadingSchedule: _isLoadingSchedule,
+                        scheduleError: _scheduleError,
+                        todayItems: _todayItems,
+                        watchIds: _watchlist.map((SubjectItem e) => e.subjectId).toSet(),
+                        progressCache: _progressCache,
+                        effectiveTodayWeekday: _effectiveTodayWeekday,
+                        timezoneLabel: _currentTimezoneFullLabel,
+                        onShowDetail: (SubjectItem item) => _showSubjectDetail(item),
+                        onToggleFollow: (SubjectItem item) => _toggleWatchFromToday(item),
+                      ),
+                      WatchTab(
+                        watchlist: _watchlist,
+                        scheduleData: _scheduleData,
+                        progressCache: _progressCache,
+                        timezoneLabel: _currentTimezoneFullLabel,
+                        onShowDetail: (SubjectItem item) => _showSubjectDetail(item),
+                        onAdjustProgress: (SubjectItem item) => _openProgressAdjustDialog(item),
+                      ),
+                      WeekCalendarTab(
+                        scheduleData: _scheduleData,
+                        watchIds: _watchlist.map((SubjectItem e) => e.subjectId).where((String id) => id.isNotEmpty).toSet(),
+                        watchById: <String, SubjectItem>{ for (final SubjectItem item in _watchlist) if (item.subjectId.isNotEmpty) item.subjectId: item, },
+                        showAll: _weekCalendarShowAll,
+                        timezoneLabel: _currentTimezoneFullLabel,
+                        onShowDetail: (SubjectItem item) => _showSubjectDetail(item),
+                        onToggleFollow: (SubjectItem item) => _toggleWatchFromToday(item),
+                        onShowAllChanged: (bool v) => setState(() { _weekCalendarShowAll = v; }),
+                      ),
+                      SearchTab(
+                        service: _service,
+                        coverCacheManager: _coverCacheManager,
+                        watchIds: _watchlist.map((SubjectItem e) => e.subjectId).where((String id) => id.isNotEmpty).toSet(),
+                        coverCacheConcurrency: _settingCoverCacheConcurrency,
+                        onShowDetail: (SubjectItem item) => _showSubjectDetail(item),
+                        onToggleFollow: (SubjectItem item) => _toggleWatchFromToday(item),
+                      ),
                     ],
                   ),
-                  _buildTaskProgressOverlay(),
+                  ProgressOverlay(
+                    showStatusText: _showStatusText,
+                    statusText: _statusText,
+                    isCachingCalendarCovers: _isCachingCalendarCovers,
+                    calendarCoverCacheDone: _calendarCoverCacheDone,
+                    calendarCoverCacheTotal: _calendarCoverCacheTotal,
+                    isLoadingProgress: _isLoadingProgress,
+                    progressRefreshDone: _progressRefreshDone,
+                    progressRefreshTotal: _progressRefreshTotal,
+                  ),
                 ],
               ),
             ),
@@ -5428,721 +2973,9 @@ class _BangumiHomePageState extends State<BangumiHomePage>
 }
 
 /// 柱状图渲染器 — 用于评分分布等场景。
-class _CommentBarPainter extends CustomPainter {
-  _CommentBarPainter({
-    required this.values,
-    required this.maxCount,
-    required this.barWidth,
-    required this.chartBarsHeight,
-    required this.effectiveGap,
-    required this.minBarHeight,
-    required this.baseColor,
-  });
 
-  final List<int> values;
-  final int maxCount;
-  final double barWidth;
-  final double chartBarsHeight;
-  final double effectiveGap;
-  final double minBarHeight;
-  final Color baseColor;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    if (values.isEmpty || maxCount <= 0) return;
-
-    final Paint paint = Paint()..style = PaintingStyle.fill;
-    final double startX = (size.width - _totalWidth) / 2;
-
-    for (int i = 0; i < values.length; i++) {
-      final int value = values[i];
-      final double ratio = value <= 0
-          ? 0.08
-          : value / maxCount;
-      final double barHeight = (chartBarsHeight * ratio).clamp(minBarHeight, chartBarsHeight);
-      final Color color = Color.lerp(
-        baseColor.withValues(alpha: 0.25),
-        baseColor,
-        ratio.clamp(0.0, 1.0),
-      ) ?? baseColor;
-
-      paint.color = color;
-      final double x = startX + i * (barWidth + effectiveGap);
-      final double y = chartBarsHeight - barHeight;
-      canvas.drawRRect(
-        RRect.fromRectAndRadius(
-          Rect.fromLTWH(x, y, barWidth, barHeight),
-          const Radius.circular(2),
-        ),
-        paint,
-      );
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant _CommentBarPainter oldDelegate) {
-    return oldDelegate.values != values ||
-        oldDelegate.maxCount != maxCount ||
-        oldDelegate.barWidth != barWidth ||
-        oldDelegate.chartBarsHeight != chartBarsHeight ||
-        oldDelegate.effectiveGap != effectiveGap ||
-        oldDelegate.minBarHeight != minBarHeight ||
-        oldDelegate.baseColor != baseColor;
-  }
-
-  double get _totalWidth =>
-      values.length * barWidth +
-      (values.length - 1) * effectiveGap;
-}
 
 /// 条目详情底部弹窗内容。
-class _SubjectDetailBody extends StatefulWidget {
-  const _SubjectDetailBody({
-    required this.subjectId,
-    required this.item,
-    required this.service,
-    required this.coverCacheManager,
-    required this.onOpenInBrowser,
-    required this.onToggleFollow,
-    required this.isFollowed,
-  });
 
-  final String subjectId;
-  final SubjectItem item;
-  final BangumiService service;
-  final CoverCacheManager coverCacheManager;
-  final VoidCallback onOpenInBrowser;
-  final VoidCallback onToggleFollow;
-  final bool isFollowed;
 
-  @override
-  State<_SubjectDetailBody> createState() => _SubjectDetailBodyState();
-}
 
-class _SubjectDetailBodyState extends State<_SubjectDetailBody> {
-  Map<String, dynamic>? _data;
-  String? _error;
-  bool _loading = true;
-  String? _localCoverPath;
-  bool _summaryExpanded = false;
-
-  @override
-  void initState() {
-    super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) => _loadData());
-  }
-
-  Future<void> _loadData() async {
-    setState(() {
-      _loading = true;
-      _error = null;
-      _data = null;
-    });
-    try {
-      final Map<String, dynamic>? data =
-          await widget.service.fetchSubjectFromApi(widget.subjectId);
-      if (!mounted) return;
-
-      if (data == null) {
-        setState(() {
-          _error = '获取条目信息失败';
-          _loading = false;
-        });
-        return;
-      }
-
-      // 缓存封面
-      String? coverUrl;
-      final dynamic images = data['images'];
-      if (images is Map<String, dynamic>) {
-        coverUrl = (images['large'] ?? images['common'] ?? images['medium'] ?? '').toString();
-      }
-      if ((coverUrl == null || coverUrl.isEmpty) && widget.item.coverUrl.isNotEmpty) {
-        coverUrl = widget.item.coverUrl;
-      }
-
-      String? localPath;
-      if (coverUrl != null && coverUrl.isNotEmpty) {
-        try {
-          localPath = await widget.coverCacheManager.ensureCached(
-            subjectId: widget.subjectId,
-            imageUrl: coverUrl,
-            fetch: (String url) => widget.service.fetchImageWithRetry(url),
-          ).timeout(const Duration(seconds: 12));
-        } catch (_) {}
-      }
-
-      if (!mounted) return;
-      if (mounted) {
-        setState(() {
-          _data = data;
-          _localCoverPath = localPath;
-          _loading = false;
-        });
-      }
-    } catch (e) {
-      if (!mounted) return;
-      if (mounted) {
-        setState(() {
-          _error = '加载失败: $e';
-          _loading = false;
-        });
-      }
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final ColorScheme colors = Theme.of(context).colorScheme;
-
-    if (_loading) {
-      return SizedBox(
-        height: 300,
-        child: Center(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: <Widget>[
-              const CircularProgressIndicator(),
-              const SizedBox(height: 16),
-              Text('正在加载条目信息…', style: Theme.of(context).textTheme.bodyMedium),
-            ],
-          ),
-        ),
-      );
-    }
-
-    if (_error != null || _data == null) {
-      return SizedBox(
-        height: 300,
-        child: Center(
-          child: Padding(
-            padding: const EdgeInsets.all(24),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: <Widget>[
-                Icon(Icons.error_outline, size: 48, color: colors.error),
-                const SizedBox(height: 12),
-                Text(
-                  _error ?? '未知错误',
-                  textAlign: TextAlign.center,
-                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: colors.error),
-                ),
-                const SizedBox(height: 16),
-                FilledButton.tonal(
-                  onPressed: () {
-                    _loadData();
-                  },
-                  child: const Text('重试'),
-                ),
-              ],
-            ),
-          ),
-        ),
-      );
-    }
-
-    final Map<String, dynamic> data = _data!;
-    final String nameCn = _readString(data['name_cn']) ?? widget.item.nameCn;
-    final String nameOrigin = _readString(data['name']) ?? widget.item.nameOrigin;
-
-    return DraggableScrollableSheet(
-      initialChildSize: 0.85,
-      minChildSize: 0.5,
-      maxChildSize: 0.95,
-      expand: false,
-      builder: (BuildContext context, ScrollController scrollController) {
-        return Padding(
-          padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
-          child: ListView(
-            controller: scrollController,
-            children: <Widget>[
-              // Top row: header (left) + cover + rating (right)
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: <Widget>[
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: <Widget>[
-                        _buildHeader(colors, nameCn, nameOrigin),
-                        const SizedBox(height: 16),
-                        _buildInfoChips(colors, data),
-                        const SizedBox(height: 12),
-                        if (data['meta_tags'] is List)
-                          _buildGenreTags(colors, data['meta_tags'] as List<dynamic>),
-                        if (data['infobox'] is List) ...[
-                          const SizedBox(height: 12),
-                          _buildInfobox(colors, data['infobox'] as List<dynamic>),
-                        ],
-                        const SizedBox(height: 12),
-                        _buildFollowButton(colors),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  // Right column: cover + rating below
-                  SizedBox(
-                    width: 260,
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: <Widget>[
-                        _buildCover(colors),
-                        if (data['rating'] is Map<String, dynamic>) ...[
-                          const SizedBox(height: 12),
-                          _buildRatingSection(colors, data['rating'] as Map<String, dynamic>),
-                        ],
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 16),
-              // Summary
-              if (_readString(data['summary']) case final String summary?)
-                _buildSummary(colors, summary),
-              const SizedBox(height: 20),
-              // Action button
-              _buildActionButton(colors),
-              const SizedBox(height: 24),
-            ],
-          ),
-        );
-      },
-    );
-  }
-
-  Widget _buildFollowButton(ColorScheme colors) {
-    final bool followed = widget.isFollowed;
-    return SizedBox(
-      width: double.infinity,
-      child: followed
-          ? OutlinedButton.icon(
-              onPressed: () { widget.onToggleFollow(); },
-              icon: const Icon(Icons.star, size: 16),
-              label: const Text('已关注'),
-              style: OutlinedButton.styleFrom(
-                foregroundColor: colors.error,
-              ),
-            )
-          : FilledButton.tonalIcon(
-              onPressed: () { widget.onToggleFollow(); },
-              icon: const Icon(Icons.add, size: 16),
-              label: const Text('关注'),
-            ),
-    );
-  }
-
-  Widget _buildHeader(ColorScheme colors, String nameCn, String nameOrigin) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: <Widget>[
-        // Title
-        Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: <Widget>[
-            Text(
-              nameCn.isNotEmpty ? nameCn : nameOrigin,
-              style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-            if (nameCn.isNotEmpty && nameOrigin.isNotEmpty && nameOrigin != nameCn) ...[
-              const SizedBox(height: 4),
-              Text(
-                nameOrigin,
-                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                  color: colors.onSurfaceVariant,
-                ),
-              ),
-            ],
-          ],
-        ),
-      ],
-    );
-  }
-
-  Widget _buildCover(ColorScheme colors) {
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(8),
-      child: _localCoverPath != null && File(_localCoverPath!).existsSync()
-          ? Image.file(
-              File(_localCoverPath!),
-              width: 260,
-              height: 346,
-              fit: BoxFit.cover,
-              errorBuilder: (_, _, _) => _buildCoverPlaceholder(colors),
-            )
-          : _buildCoverPlaceholder(colors),
-    );
-  }
-
-  Widget _buildCoverPlaceholder(ColorScheme colors) {
-    return Container(
-      width: 260,
-      height: 346,
-      color: colors.surfaceContainerHighest,
-      child: Icon(
-        Icons.movie_creation_outlined,
-        size: 36,
-        color: colors.onSurfaceVariant,
-      ),
-    );
-  }
-
-  Widget _buildRatingSection(ColorScheme colors, Map<String, dynamic> rating) {
-    final double score = _readDouble(rating['score']) ?? 0;
-    final int total = _readInt(rating['total']) ?? 0;
-    final int rank = _readInt(rating['rank']) ?? 0;
-
-    final dynamic rawCount = rating['count'];
-    final List<int> values = List<int>.generate(10, (int i) {
-      if (rawCount is Map) {
-        return _readInt(rawCount['${i + 1}']) ?? 0;
-      }
-      return 0;
-    });
-    final int maxCount = values.fold<int>(0, (int a, int b) => a > b ? a : b);
-
-    final EpisodeCommentChartLayout chartLayout = EpisodeCommentChartLayout(
-      alignment: Alignment.centerRight,
-      offsetX: 0,
-      offsetY: 0,
-      width: 250,
-      height: 65,
-      headerHeight: 13,
-      headerBottomGap: 2,
-      barGap: 2,
-      minBarHeight: 2,
-      backgroundRadius: 12,
-      contentPaddingHorizontal: 8,
-      contentPaddingVertical: 5,
-      backgroundColor: colors.surface,
-      backgroundBorderColor: colors.outlineVariant,
-    );
-
-    return Container(
-      width: double.infinity,
-      height: chartLayout.height,
-      padding: EdgeInsets.symmetric(
-        horizontal: chartLayout.contentPaddingHorizontal,
-        vertical: chartLayout.contentPaddingVertical,
-      ),
-      decoration: BoxDecoration(
-        color: chartLayout.backgroundColor,
-        borderRadius: BorderRadius.circular(chartLayout.backgroundRadius),
-        border: Border.all(color: chartLayout.backgroundBorderColor),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: <Widget>[
-          SizedBox(
-            height: chartLayout.headerHeight,
-            child: Row(
-              children: <Widget>[
-                Text('评分分布', style: Theme.of(context).textTheme.labelSmall),
-                const Spacer(),
-                Text(
-                  '评分 $score | 共 $total 人${rank > 0 ? ' | #$rank' : ''}',
-                  style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                    color: colors.onSurfaceVariant,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          SizedBox(height: chartLayout.headerBottomGap),
-          const SizedBox(height: 4),
-          Expanded(
-            child: LayoutBuilder(
-              builder: (BuildContext context, BoxConstraints constraints) {
-                final double availableWidth = constraints.maxWidth;
-                const double barCount = 10;
-                final double effectiveGap = chartLayout.barGap;
-                final double totalGap = effectiveGap * (barCount - 1);
-                final double barWidth = ((availableWidth - totalGap) / barCount).clamp(2.0, double.infinity);
-
-                final double labelHeight = 12;
-                // Reverse values so bars display 10 → 1 (left to right)
-                final List<int> reversed = List<int>.from(values.reversed);
-                return Column(
-                  crossAxisAlignment: CrossAxisAlignment.end,
-                  children: <Widget>[
-                    Expanded(
-                      child: CustomPaint(
-                        size: Size(availableWidth, (constraints.maxHeight - labelHeight).clamp(0, double.infinity)),
-                        painter: _CommentBarPainter(
-                          values: reversed,
-                          maxCount: maxCount > 0 ? maxCount : 1,
-                          barWidth: barWidth,
-                          chartBarsHeight: (constraints.maxHeight - labelHeight - 2).clamp(0, double.infinity),
-                          effectiveGap: effectiveGap,
-                          minBarHeight: chartLayout.minBarHeight,
-                          baseColor: colors.primary,
-                        ),
-                      ),
-                    ),
-                    // X-axis labels (10 → 1)
-                    Row(
-                      children: List<Widget>.generate(10, (int i) {
-                        return Expanded(
-                          child: Text(
-                            '${10 - i}',
-                            textAlign: TextAlign.center,
-                            style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                              fontSize: 9,
-                              color: colors.onSurfaceVariant,
-                            ),
-                          ),
-                        );
-                      }),
-                    ),
-                  ],
-                );
-              },
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildInfoChips(ColorScheme colors, Map<String, dynamic> data) {
-    final List<Widget> chips = <Widget>[];
-
-    final String? date = _readString(data['date']);
-    if (date != null && date.isNotEmpty) {
-      chips.add(_buildChip(colors, date));
-    }
-
-    final String? platform = _readString(data['platform']);
-    if (platform != null && platform.isNotEmpty) {
-      chips.add(_buildChip(colors, platform));
-    }
-
-    final int? totalEps = _readInt(data['total_episodes']) ?? _readInt(data['eps']);
-    if (totalEps != null && totalEps > 0) {
-      chips.add(_buildChip(colors, '共 $totalEps 话'));
-    }
-
-    if (chips.isEmpty) return const SizedBox.shrink();
-
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
-      child: Wrap(
-        spacing: 8,
-        runSpacing: 4,
-        children: chips,
-      ),
-    );
-  }
-
-  Widget _buildChip(ColorScheme colors, String text) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-      decoration: BoxDecoration(
-        color: colors.secondaryContainer,
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Text(
-        text,
-        style: TextStyle(
-          fontSize: 12,
-          color: colors.onSecondaryContainer,
-        ),
-      ),
-    );
-  }
-
-  Widget _buildGenreTags(ColorScheme colors, List<dynamic> tags) {
-    if (tags.isEmpty) return const SizedBox.shrink();
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 12),
-      child: Wrap(
-        spacing: 6,
-        runSpacing: 4,
-        children: tags.whereType<String>().map((String tag) {
-          return Container(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-            decoration: BoxDecoration(
-              color: colors.tertiaryContainer,
-              borderRadius: BorderRadius.circular(6),
-            ),
-            child: Text(
-              tag,
-              style: TextStyle(
-                fontSize: 11,
-                color: colors.onTertiaryContainer,
-              ),
-            ),
-          );
-        }).toList(),
-      ),
-    );
-  }
-
-  Widget _buildInfobox(ColorScheme colors, List<dynamic> infobox) {
-    if (infobox.isEmpty) return const SizedBox.shrink();
-
-    final List<MapEntry<String, String>> entries = <MapEntry<String, String>>[];
-    for (final dynamic entry in infobox) {
-      if (entry is Map) {
-        final String key = _readString(entry['key']) ?? '';
-        final dynamic rawValue = entry['value'];
-        String value;
-        if (rawValue is List) {
-          value = rawValue.whereType<String>().join('、');
-        } else {
-          value = _readString(rawValue) ?? '';
-        }
-        if (key.isNotEmpty && value.isNotEmpty) {
-          entries.add(MapEntry<String, String>(key, value));
-        }
-      }
-    }
-
-    if (entries.isEmpty) return const SizedBox.shrink();
-
-    final List<MapEntry<String, String>> display = entries.take(6).toList();
-
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 12),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: display.map((MapEntry<String, String> e) {
-          return Padding(
-            padding: const EdgeInsets.symmetric(vertical: 2),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: <Widget>[
-                SizedBox(
-                  width: 80,
-                  child: Text(
-                    '${e.key}:',
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      fontWeight: FontWeight.w600,
-                      color: colors.onSurfaceVariant,
-                    ),
-                  ),
-                ),
-                Expanded(
-                  child: Text(
-                    e.value,
-                    style: Theme.of(context).textTheme.bodySmall,
-                  ),
-                ),
-              ],
-            ),
-          );
-        }).toList(),
-      ),
-    );
-  }
-
-  Widget _buildSummary(ColorScheme colors, String summary) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: <Widget>[
-        Row(
-          children: <Widget>[
-            Text(
-              '简介',
-              style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-            const SizedBox(width: 6),
-            SizedBox(
-              width: 20,
-              height: 20,
-              child: IconButton(
-                padding: EdgeInsets.zero,
-                iconSize: 14,
-                icon: const Icon(Icons.copy),
-                tooltip: '复制简介',
-                onPressed: () {
-                  Clipboard.setData(ClipboardData(text: summary));
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text('简介已复制'),
-                      duration: Duration(seconds: 2),
-                    ),
-                  );
-                },
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 4),
-        AnimatedCrossFade(
-          firstChild: Text(
-            summary,
-            maxLines: 4,
-            overflow: TextOverflow.ellipsis,
-            style: Theme.of(context).textTheme.bodySmall,
-          ),
-          secondChild: Text(
-            summary,
-            style: Theme.of(context).textTheme.bodySmall,
-          ),
-          crossFadeState: _summaryExpanded
-              ? CrossFadeState.showSecond
-              : CrossFadeState.showFirst,
-          duration: const Duration(milliseconds: 200),
-        ),
-        if (summary.length > 120)
-          TextButton(
-            onPressed: () {
-              setState(() {
-                _summaryExpanded = !_summaryExpanded;
-              });
-            },
-            child: Text(_summaryExpanded ? '收起' : '展开'),
-          ),
-      ],
-    );
-  }
-
-  Widget _buildActionButton(ColorScheme colors) {
-    return SizedBox(
-      width: double.infinity,
-      child: OutlinedButton.icon(
-        onPressed: () {
-          Navigator.of(context).pop();
-          widget.onOpenInBrowser();
-        },
-        icon: const Icon(Icons.open_in_browser),
-        label: const Text('在浏览器中打开 Bangumi 条目'),
-      ),
-    );
-  }
-
-  // ---- Helper methods ----
-
-  String? _readString(dynamic value) {
-    if (value == null) return null;
-    if (value is String) return value;
-    return value.toString();
-  }
-
-  double? _readDouble(dynamic value) {
-    if (value == null) return null;
-    if (value is double) return value;
-    if (value is int) return value.toDouble();
-    if (value is String) {
-      final double? parsed = double.tryParse(value);
-      if (parsed != null) return parsed;
-    }
-    return null;
-  }
-
-  int? _readInt(dynamic value) {
-    if (value == null) return null;
-    if (value is int) return value;
-    if (value is double) return value.round();
-    if (value is String) {
-      final int? parsed = int.tryParse(value);
-      if (parsed != null) return parsed;
-    }
-    return null;
-  }
-}

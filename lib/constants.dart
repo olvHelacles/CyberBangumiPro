@@ -118,3 +118,26 @@ String readJsonString(dynamic value) {
   final String text = value.toString().trim();
   return text == 'null' ? '' : text;
 }
+
+/// Read a nullable string from dynamic, returning null for null/non-string input.
+String? readJsonStringNullable(dynamic value) {
+  if (value == null) return null;
+  if (value is String) return value;
+  return value.toString();
+}
+
+/// Read an int from dynamic (handles int, double, String).
+int? readJsonInt(dynamic value) {
+  if (value == null) return null;
+  if (value is int) return value;
+  if (value is double) return value.toInt();
+  return int.tryParse(value.toString().trim());
+}
+
+/// Read a double from dynamic (handles double, int, String).
+double? readJsonDouble(dynamic value) {
+  if (value == null) return null;
+  if (value is double) return value;
+  if (value is int) return value.toDouble();
+  return double.tryParse(value.toString().trim());
+}
