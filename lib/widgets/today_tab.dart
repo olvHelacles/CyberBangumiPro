@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../constants.dart';
 import '../models/subject_item.dart';
 import '../models/subject_progress.dart';
 import '../widgets/subject_tile.dart';
@@ -9,19 +10,8 @@ import '../widgets/subject_tile.dart';
 ///
 /// Matches the exact same semantics as the original [_parseUpdateTimeMinutes]
 /// method on [_BangumiHomePageState].
-int _parseUpdateTimeMinutes(String text) {
-  final RegExpMatch? match = RegExp(r'^(\d{1,2}):(\d{2})$').firstMatch(text);
-  if (match == null) {
-    return 24 * 60 + 1;
-  }
-
-  final int hour = int.tryParse(match.group(1) ?? '') ?? 99;
-  final int minute = int.tryParse(match.group(2) ?? '') ?? 99;
-  if (hour < 0 || hour > 29 || minute < 0 || minute > 59) {
-    return 24 * 60 + 1;
-  }
-  return hour * 60 + minute;
-}
+int _parseUpdateTimeMinutes(String text) =>
+    parseUpdateTimeMinutes(text);
 
 /// Standalone tab that displays today's schedule items, split into followed
 /// (watchlist) and unfollowed groups, sorted by update time.

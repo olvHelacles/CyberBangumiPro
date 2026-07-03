@@ -14,6 +14,7 @@ class SubjectProgress {
     this.episodeTitleByEp = const <int, String>{},
     this.progressText,
     this.latestAiredAtLabel,
+    this.latestAiredAt,
     this.error,
   });
 
@@ -28,6 +29,7 @@ class SubjectProgress {
   final Map<int, String> episodeTitleByEp;
   final String? progressText;
   final String? latestAiredAtLabel;
+  final DateTime? latestAiredAt;
   final String? error;
 }
 

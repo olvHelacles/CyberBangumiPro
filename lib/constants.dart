@@ -19,6 +19,11 @@ const String appBarBackgroundImagePathSettingKey =
 const String progressCorrectionStorageKey = 'progress_corrections_v1';
 const String progressCorrectionDeltaStorageKey =
     'progress_correction_deltas_v1';
+const String correctionBaseStorageKey = 'correction_base_v1';
+const String catchUpProgressStorageKey = 'catch_up_progress_v1';
+const String catchUpTotalEpsStorageKey = 'catch_up_total_eps_v1';
+const String catchUpTitlesStorageKey = 'catch_up_titles_v1';
+const String watchlistLastUpdatedStorageKey = 'watchlist_last_updated_v1';
 const String timezoneConversionEnabledSettingKey =
     'timezone_conversion_enabled';
 const String timezoneOffsetMinutesSettingKey = 'timezone_offset_minutes';
@@ -140,4 +145,15 @@ double? readJsonDouble(dynamic value) {
   if (value is double) return value;
   if (value is int) return value.toDouble();
   return double.tryParse(value.toString().trim());
+}
+
+/// Parse a "HH:MM" time string into total minutes since midnight, returning
+/// a sentinel past 24:00 for invalid / unrecognized formats.
+int parseUpdateTimeMinutes(String text) {
+  final RegExpMatch? match = RegExp(r'^(\d{1,2}):(\d{2})$').firstMatch(text);
+  if (match == null) return 24 * 60 + 1;
+  final int hour = int.tryParse(match.group(1) ?? '') ?? 99;
+  final int minute = int.tryParse(match.group(2) ?? '') ?? 99;
+  if (hour < 0 || hour > 29 || minute < 0 || minute > 59) return 24 * 60 + 1;
+  return hour * 60 + minute;
 }

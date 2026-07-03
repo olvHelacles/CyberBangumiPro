@@ -51,24 +51,14 @@ class CoverCacheManager {
 
   Future<String?> getCachedPath(String subjectId) async {
     if (subjectId.isEmpty) return null;
-    final Directory primaryDir = await _ensureCacheDir();
-    final Directory workspaceDir = Directory(
-      '${Directory.current.path}${Platform.pathSeparator}cover_cache',
-    );
+    final Directory dir = await _ensureCacheDir();
 
-    final List<Directory> candidateDirs = <Directory>[primaryDir];
-    if (workspaceDir.path != primaryDir.path) {
-      candidateDirs.add(workspaceDir);
-    }
-
-    for (final Directory dir in candidateDirs) {
-      for (final String ext in _knownExtensions) {
-        final File file = File(
-          '${dir.path}${Platform.pathSeparator}$subjectId.$ext',
-        );
-        if (await file.exists()) {
-          return file.path;
-        }
+    for (final String ext in _knownExtensions) {
+      final File file = File(
+        '${dir.path}${Platform.pathSeparator}$subjectId.$ext',
+      );
+      if (await file.exists()) {
+        return file.path;
       }
     }
     return null;

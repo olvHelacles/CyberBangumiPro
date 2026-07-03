@@ -127,6 +127,12 @@ class SubjectTile extends StatelessWidget {
     this.onShowDetail,
     this.onToggleFollow,
     this.onAdjustProgress,
+    this.onArchive,
+    this.catchUpEpisode,
+    this.catchUpTitle,
+    this.catchUpTotal,
+    this.onEpisodeForward,
+    this.onEpisodeBack,
     this.onBarHover,
     this.onBarHoverEnd,
   });
@@ -151,8 +157,21 @@ class SubjectTile extends StatelessWidget {
   final VoidCallback? onShowDetail;
   final VoidCallback? onToggleFollow;
   final VoidCallback? onAdjustProgress;
+  final VoidCallback? onArchive;
+  final int? catchUpEpisode;
+  final String? catchUpTitle;
+  final int? catchUpTotal;
+  final VoidCallback? onEpisodeForward;
+  final VoidCallback? onEpisodeBack;
   final void Function(String subjectId, int? barIndex)? onBarHover;
   final VoidCallback? onBarHoverEnd;
+
+  String get _totalEpsLabel {
+    final int? total = catchUpTotal ??
+        progress?.totalEpsDeclared ??
+        progress?.totalEpsListed;
+    return total != null ? total.toString() : '?';
+  }
 
   String _formatProgress(SubjectProgress? p) {
     if (p == null) return '进度: 未获取';
@@ -257,7 +276,7 @@ class SubjectTile extends StatelessWidget {
       child: Padding(
         padding: const EdgeInsets.all(12),
         child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
+          crossAxisAlignment: CrossAxisAlignment.center,
           children: <Widget>[
             if (showCover)
               InkWell(
@@ -343,10 +362,6 @@ class SubjectTile extends StatelessWidget {
                                     counts: progress!.episodeCommentCounts,
                                     layout: effectiveChartLayout,
                                     subjectId: item.subjectId,
-                                    hoveredSubjectId: hoveredSubjectId,
-                                    hoveredBarIndex: hoveredBarIndex,
-                                    onBarHover: onBarHover,
-                                    onBarHoverEnd: onBarHoverEnd,
                                   ),
                                 ),
                               ],
@@ -410,27 +425,84 @@ class SubjectTile extends StatelessWidget {
                           ),
                         const SizedBox(height: 6),
                         Text(
-                          followed || progress != null
-                              ? _formatProgress(progress)
-                              : '进度: 未关注，不抓取',
+                          catchUpEpisode != null
+                              ? '补番: 第$catchUpEpisode集${catchUpTitle != null && catchUpTitle!.isNotEmpty ? ' 『$catchUpTitle』' : ''}/共$_totalEpsLabel集'
+                              : (followed || progress != null
+                                  ? _formatProgress(progress)
+                                  : '进度: 未关注，不抓取'),
                         ),
-                        if (onAdjustProgress != null)
+                        if (catchUpEpisode != null ||
+                            onAdjustProgress != null ||
+                            onArchive != null)
                           Padding(
                             padding: const EdgeInsets.only(top: 8),
                             child: Align(
                               alignment: Alignment.centerLeft,
-                              child: TextButton.icon(
-                                onPressed: onAdjustProgress,
-                                style: TextButton.styleFrom(
-                                  padding: const EdgeInsets.symmetric(
-                                      horizontal: 8, vertical: 2),
-                                  minimumSize: const Size(0, 28),
-                                  tapTargetSize:
-                                      MaterialTapTargetSize.shrinkWrap,
-                                  visualDensity: VisualDensity.compact,
-                                ),
-                                icon: const Icon(Icons.tune, size: 14),
-                                label: const Text('修正更新进度'),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: <Widget>[
+                                  if (catchUpEpisode != null) ...[
+                                    TextButton.icon(
+                                      onPressed: onEpisodeBack,
+                                      style: TextButton.styleFrom(
+                                        padding: const EdgeInsets.symmetric(
+                                            horizontal: 8, vertical: 2),
+                                        minimumSize: const Size(0, 28),
+                                        tapTargetSize:
+                                            MaterialTapTargetSize.shrinkWrap,
+                                        visualDensity: VisualDensity.compact,
+                                      ),
+                                      icon: const Icon(Icons.skip_previous, size: 14),
+                                      label: const Text('后退一集'),
+                                    ),
+                                    const SizedBox(width: 8),
+                                    TextButton.icon(
+                                      onPressed: onEpisodeForward,
+                                      style: TextButton.styleFrom(
+                                        padding: const EdgeInsets.symmetric(
+                                            horizontal: 8, vertical: 2),
+                                        minimumSize: const Size(0, 28),
+                                        tapTargetSize:
+                                            MaterialTapTargetSize.shrinkWrap,
+                                        visualDensity: VisualDensity.compact,
+                                      ),
+                                      icon: const Icon(Icons.skip_next, size: 14),
+                                      label: const Text('前进一集'),
+                                    ),
+                                  ] else ...[
+                                    if (onAdjustProgress != null)
+                                      TextButton.icon(
+                                        onPressed: onAdjustProgress,
+                                        style: TextButton.styleFrom(
+                                          padding: const EdgeInsets.symmetric(
+                                              horizontal: 8, vertical: 2),
+                                          minimumSize: const Size(0, 28),
+                                          tapTargetSize:
+                                              MaterialTapTargetSize.shrinkWrap,
+                                          visualDensity: VisualDensity.compact,
+                                        ),
+                                        icon: const Icon(Icons.tune, size: 14),
+                                        label: const Text('修正更新进度'),
+                                      ),
+                                  ],
+                                  if (catchUpEpisode == null &&
+                                      onAdjustProgress != null && onArchive != null)
+                                    const SizedBox(width: 8),
+                                  if (onArchive != null)
+                                    TextButton.icon(
+                                      onPressed: onArchive,
+                                      style: TextButton.styleFrom(
+                                        padding: const EdgeInsets.symmetric(
+                                            horizontal: 8, vertical: 2),
+                                        minimumSize: const Size(0, 28),
+                                        tapTargetSize:
+                                            MaterialTapTargetSize.shrinkWrap,
+                                        visualDensity: VisualDensity.compact,
+                                      ),
+                                      icon: const Icon(Icons.archive_outlined, size: 14),
+                                      label: const Text('归档'),
+                                    ),
+                                ],
                               ),
                             ),
                           ),
@@ -493,50 +565,50 @@ class SubjectTile extends StatelessWidget {
 }
 
 /// 分集评论热度柱状图（内嵌到 SubjectTile 中）。
-class _EpisodeCommentBarChart extends StatelessWidget {
+class _EpisodeCommentBarChart extends StatefulWidget {
   const _EpisodeCommentBarChart({
     required this.counts,
     required this.layout,
     required this.subjectId,
-    this.hoveredSubjectId,
-    this.hoveredBarIndex,
-    this.onBarHover,
-    this.onBarHoverEnd,
   });
 
   final List<int> counts;
   final EpisodeCommentChartLayout layout;
   final String subjectId;
-  final String? hoveredSubjectId;
-  final int? hoveredBarIndex;
-  final void Function(String subjectId, int? barIndex)? onBarHover;
-  final VoidCallback? onBarHoverEnd;
+
+  @override
+  State<_EpisodeCommentBarChart> createState() => _EpisodeCommentBarChartState();
+}
+
+class _EpisodeCommentBarChartState extends State<_EpisodeCommentBarChart> {
+  int? _hoveredBarIndex;
 
   @override
   Widget build(BuildContext context) {
-    final List<int> values = counts
+    final List<int> values = widget.counts
         .map((int value) => math.max(0, value))
         .toList(growable: false);
     final int maxCount =
         values.fold<int>(0, (int prev, int value) => math.max(prev, value));
     final double barsHeight =
-        math.max(0, layout.height - layout.headerHeight - layout.headerBottomGap);
+        math.max(0, widget.layout.height - widget.layout.headerHeight - widget.layout.headerBottomGap);
     final double barsWidth =
-        math.max(0, layout.width - layout.contentPaddingHorizontal * 2);
+        math.max(0, widget.layout.width - widget.layout.contentPaddingHorizontal * 2);
     final int barCount = values.length;
 
     return MouseRegion(
       opaque: true,
       onExit: (_) {
-        if (hoveredSubjectId != subjectId) return;
-        onBarHoverEnd?.call();
+        setState(() {
+          _hoveredBarIndex = null;
+        });
       },
       onHover: (event) {
         int? index;
         if (barCount > 0) {
-          final double barTop = layout.contentPaddingVertical +
-              layout.headerHeight +
-              layout.headerBottomGap;
+          final double barTop = widget.layout.contentPaddingVertical +
+              widget.layout.headerHeight +
+              widget.layout.headerBottomGap;
           final double barBottom = barTop + barsHeight;
           final bool insideBarRegion =
               event.localPosition.dy >= barTop &&
@@ -544,12 +616,12 @@ class _EpisodeCommentBarChart extends StatelessWidget {
 
           if (insideBarRegion) {
             final double relativeX =
-                (event.localPosition.dx - layout.contentPaddingHorizontal)
+                (event.localPosition.dx - widget.layout.contentPaddingHorizontal)
                     .clamp(0.0, barsWidth);
             final double maxGapByWidth =
                 barCount <= 1 ? 0 : barsWidth / (barCount * 2);
             final double effectiveGap =
-                math.min(layout.barGap, maxGapByWidth);
+                math.min(widget.layout.barGap, maxGapByWidth);
             final double totalGapWidth = effectiveGap * (barCount - 1);
             final double rawBarWidth =
                 (barsWidth - totalGapWidth) / barCount;
@@ -564,25 +636,27 @@ class _EpisodeCommentBarChart extends StatelessWidget {
             index = computed;
           }
         }
-        onBarHover?.call(subjectId, index);
+        setState(() {
+          _hoveredBarIndex = index;
+        });
       },
       child: Container(
-        width: layout.width,
-        height: layout.height,
+        width: widget.layout.width,
+        height: widget.layout.height,
         padding: EdgeInsets.symmetric(
-          horizontal: layout.contentPaddingHorizontal,
-          vertical: layout.contentPaddingVertical,
+          horizontal: widget.layout.contentPaddingHorizontal,
+          vertical: widget.layout.contentPaddingVertical,
         ),
         decoration: BoxDecoration(
-          color: layout.backgroundColor,
-          borderRadius: BorderRadius.circular(layout.backgroundRadius),
-          border: Border.all(color: layout.backgroundBorderColor),
+          color: widget.layout.backgroundColor,
+          borderRadius: BorderRadius.circular(widget.layout.backgroundRadius),
+          border: Border.all(color: widget.layout.backgroundBorderColor),
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: <Widget>[
             SizedBox(
-              height: layout.headerHeight,
+              height: widget.layout.headerHeight,
               child: Row(
                 children: <Widget>[
                   Text('分集评论热度',
@@ -597,7 +671,7 @@ class _EpisodeCommentBarChart extends StatelessWidget {
                 ],
               ),
             ),
-            SizedBox(height: layout.headerBottomGap),
+            SizedBox(height: widget.layout.headerBottomGap),
             Expanded(
               child: LayoutBuilder(
                 builder: (BuildContext context, BoxConstraints constraints) {
@@ -608,7 +682,7 @@ class _EpisodeCommentBarChart extends StatelessWidget {
                       alignment: Alignment.bottomCenter,
                       child: Container(
                         width: constraints.maxWidth,
-                        height: layout.minBarHeight,
+                        height: widget.layout.minBarHeight,
                         decoration: BoxDecoration(
                           color: Theme.of(context)
                               .colorScheme
@@ -625,7 +699,7 @@ class _EpisodeCommentBarChart extends StatelessWidget {
                       ? 0
                       : constraints.maxWidth / (barCount * 2);
                   final double effectiveGap =
-                      math.min(layout.barGap, maxGapByWidth);
+                      math.min(widget.layout.barGap, maxGapByWidth);
                   final double totalGapWidth = effectiveGap * (barCount - 1);
                   final double rawBarWidth =
                       (constraints.maxWidth - totalGapWidth) / barCount;
@@ -633,7 +707,7 @@ class _EpisodeCommentBarChart extends StatelessWidget {
                       ? rawBarWidth
                       : 0;
 
-                  final bool isHovered = hoveredSubjectId == subjectId;
+                  final bool isHovered = _hoveredBarIndex != null;
 
                   return Stack(
                     clipBehavior: Clip.none,
@@ -666,7 +740,7 @@ class _EpisodeCommentBarChart extends StatelessWidget {
                               child: Container(
                                 width: barWidth,
                                 height: math.max(
-                                  layout.minBarHeight,
+                                  widget.layout.minBarHeight,
                                   chartBarsHeight * ratio,
                                 ),
                                 decoration: BoxDecoration(
@@ -679,16 +753,15 @@ class _EpisodeCommentBarChart extends StatelessWidget {
                         }),
                       ),
                       if (isHovered &&
-                          hoveredBarIndex != null &&
-                          hoveredBarIndex! >= 0 &&
-                          hoveredBarIndex! < barCount)
+                          _hoveredBarIndex! >= 0 &&
+                          _hoveredBarIndex! < barCount)
                         Positioned(
                           top: -24,
                           left: (() {
                             final double step = barWidth + effectiveGap;
                             final double center =
-                                hoveredBarIndex! * step + barWidth / 2;
-                            const double labelWidth = 76;
+                                _hoveredBarIndex! * step + barWidth / 2;
+                            const double labelWidth = 100;
                             return (center - labelWidth / 2)
                                 .clamp(0.0,
                                     math.max(0.0, constraints.maxWidth - labelWidth))
@@ -696,7 +769,7 @@ class _EpisodeCommentBarChart extends StatelessWidget {
                           })(),
                           child: IgnorePointer(
                             child: Container(
-                              width: 76,
+                              width: 100,
                               padding: const EdgeInsets.symmetric(
                                   horizontal: 8, vertical: 4),
                               decoration: BoxDecoration(
@@ -704,7 +777,7 @@ class _EpisodeCommentBarChart extends StatelessWidget {
                                 borderRadius: BorderRadius.circular(6),
                               ),
                               child: Text(
-                                '评论 ${values[hoveredBarIndex!]}',
+                                '第${_hoveredBarIndex! + 1}集, 评论${values[_hoveredBarIndex!]}',
                                 textAlign: TextAlign.center,
                                 style: Theme.of(context)
                                     .textTheme

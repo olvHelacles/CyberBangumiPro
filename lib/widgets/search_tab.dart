@@ -47,6 +47,51 @@ class _SearchTabState extends State<SearchTab> {
     super.dispose();
   }
 
+  List<SearchSubjectResult> _sortResults(
+    List<SearchSubjectResult> results,
+    String keyword,
+  ) {
+    final String kw = keyword.trim().toLowerCase();
+    final String kwNorm = kw.replaceAll(RegExp(r'[\s\-_:：;；・]'), '');
+
+    int matchScore(SearchSubjectResult r) {
+      final String cn = r.subject.nameCn.toLowerCase();
+      final String jp = r.subject.nameOrigin.toLowerCase();
+      final String cnNorm = cn.replaceAll(RegExp(r'[\s\-_:：;；・]'), '');
+      final String jpNorm = jp.replaceAll(RegExp(r'[\s\-_:：;；・]'), '');
+
+      if (cn == kw || jp == kw) return 10000;
+      if (cn.contains(kw)) return 8000 + (kw.length * 1000 ~/ cn.length);
+      if (jp.contains(kw)) return 7000 + (kw.length * 1000 ~/ jp.length);
+      if (cnNorm == kwNorm || jpNorm == kwNorm) return 6000;
+      if (cnNorm.contains(kwNorm)) {
+        return 4000 + (kwNorm.length * 1000 ~/ cnNorm.length);
+      }
+      if (jpNorm.contains(kwNorm)) {
+        return 3000 + (kwNorm.length * 1000 ~/ jpNorm.length);
+      }
+      return 0;
+    }
+
+    final List<SearchSubjectResult> sorted =
+        List<SearchSubjectResult>.from(results);
+    sorted.sort((SearchSubjectResult a, SearchSubjectResult b) {
+      final int msA = matchScore(a);
+      final int msB = matchScore(b);
+      final int diff = msB - msA;
+      if (diff.abs() <= 2000) {
+        final int popCmp = b.popularity.compareTo(a.popularity);
+        if (popCmp != 0) return popCmp;
+      } else {
+        if (diff != 0) return diff;
+      }
+      final double aScore = a.ratingScore ?? 0;
+      final double bScore = b.ratingScore ?? 0;
+      return bScore.compareTo(aScore);
+    });
+    return sorted;
+  }
+
   Future<void> _performSearch(String keyword) async {
     if (keyword.trim().isEmpty) return;
     setState(() {
@@ -66,17 +111,8 @@ class _SearchTabState extends State<SearchTab> {
 
       if (!mounted) return;
 
-      // Sort by popularity desc, then rating score desc.
-      final List<SearchSubjectResult> sorted = List<SearchSubjectResult>.from(
-        response.results,
-      );
-      sorted.sort((SearchSubjectResult a, SearchSubjectResult b) {
-        final int popCmp = b.popularity.compareTo(a.popularity);
-        if (popCmp != 0) return popCmp;
-        final double aScore = a.ratingScore ?? 0;
-        final double bScore = b.ratingScore ?? 0;
-        return bScore.compareTo(aScore);
-      });
+      final List<SearchSubjectResult> sorted =
+          _sortResults(response.results, keyword);
 
       setState(() {
         _allSearchResults = sorted;
@@ -113,17 +149,8 @@ class _SearchTabState extends State<SearchTab> {
 
       if (!mounted) return;
 
-      // Sort by popularity desc, then rating score desc.
-      final List<SearchSubjectResult> sorted = List<SearchSubjectResult>.from(
-        response.results,
-      );
-      sorted.sort((SearchSubjectResult a, SearchSubjectResult b) {
-        final int popCmp = b.popularity.compareTo(a.popularity);
-        if (popCmp != 0) return popCmp;
-        final double aScore = a.ratingScore ?? 0;
-        final double bScore = b.ratingScore ?? 0;
-        return bScore.compareTo(aScore);
-      });
+      final List<SearchSubjectResult> sorted =
+          _sortResults(response.results, keyword);
 
       setState(() {
         _allSearchResults = sorted;

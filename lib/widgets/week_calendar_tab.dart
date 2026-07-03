@@ -8,19 +8,8 @@ import '../models/subject_item.dart';
 
 /// Parses a "HH:MM" time string into total minutes since midnight, returning
 /// a sentinel past 24:00 for invalid / unrecognized formats.
-int _parseUpdateTimeMinutes(String text) {
-  final RegExpMatch? match = RegExp(r'^(\d{1,2}):(\d{2})$').firstMatch(text);
-  if (match == null) {
-    return 24 * 60 + 1;
-  }
-
-  final int hour = int.tryParse(match.group(1) ?? '') ?? 99;
-  final int minute = int.tryParse(match.group(2) ?? '') ?? 99;
-  if (hour < 0 || hour > 29 || minute < 0 || minute > 59) {
-    return 24 * 60 + 1;
-  }
-  return hour * 60 + minute;
-}
+int _parseUpdateTimeMinutes(String text) =>
+    parseUpdateTimeMinutes(text);
 
 /// Standalone placeholder for week calendar cover entries (108x146).
 Widget _buildWeekCalendarPlaceholder(BuildContext context) {

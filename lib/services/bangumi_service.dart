@@ -400,6 +400,10 @@ Future<String> _getWithRetry(
 
   Future<List<DaySchedule>> fetchCalendarSchedule() async {
     _subjectStartDates.clear();
+    _airingCache.removeWhere(
+      (_, _AiringCacheEntry e) =>
+          DateTime.now().difference(e.cachedAt) > _airingCacheTtl * 2,
+    );
     final String url = _buildArchiveUrl(DateTime.now());
     final String pageText = await _getWithRetry(url, purpose: '抓取 BGMLIST 当季番组页面');
     return parseDailySchedule(pageText);
@@ -455,6 +459,8 @@ Future<String> _getWithRetry(
 
   Future<bool> _checkSubjectStillAiring(String subjectId) async {
     if (subjectId.isEmpty) return false;
+    // Throttle OnAir checks — same slot covers both API calls below.
+    await _waitForRequestSlot();
     final Map<String, dynamic>? subject = await _fetchSubjectFromApi(subjectId);
     if (subject == null || subject.isEmpty) return false;
     final int? totalEps = _readInt(subject['total_episodes']) ?? _readInt(subject['eps']);
@@ -545,7 +551,7 @@ Future<String> _getWithRetry(
     }
   }
 
-  String _extractBangumiIdFromBgmListItem(Map<String, dynamic> item) {
+  String extractBangumiIdFromBgmListItem(Map<String, dynamic> item) {
     final dynamic sitesRaw = item['sites'];
     if (sitesRaw is! List) return '';
     for (final dynamic siteRaw in sitesRaw) {
@@ -622,7 +628,7 @@ Future<String> _getWithRetry(
       if (itemsRaw is! List) return <BgmListScheduleCandidate>[];
 
       return itemsRaw.whereType<Map<String, dynamic>>().map((raw) {
-        final String subjectId = _extractBangumiIdFromBgmListItem(raw);
+        final String subjectId = extractBangumiIdFromBgmListItem(raw);
         if (subjectId.isEmpty) return null;
 
         final String titleJp = _readString(raw['title']);
@@ -830,7 +836,13 @@ Future<String> _getWithRetry(
 
       if (isAired) {
         airedCount += 1;
-        if (epNo > 0) { latestAiredEp = epNo; latestAiredAtInDisplay = airedAtInDisplay; }
+        if (epNo > 0) {
+          latestAiredEp = epNo;
+          latestAiredAtInDisplay = airedAtInDisplay ??
+              (airdate != null
+                  ? DateTime.utc(airdate.year, airdate.month, airdate.day)
+                  : null);
+        }
         if (display.isNotEmpty) latestAiredDisplayTitle = display;
       } else if (nextEp == null && epNo > 0) {
         nextEp = epNo;
@@ -858,6 +870,7 @@ Future<String> _getWithRetry(
       latestAiredEp: latestAiredEp,
       latestAiredCnTitle: latestAiredDisplayTitle,
       latestAiredAtLabel: latestAiredAtLabel,
+      latestAiredAt: latestAiredAtInDisplay,
       nextEp: nextEp,
       ratingScore: ratingScore,
       episodeCommentCounts: List<int>.unmodifiable(episodeCommentCounts),

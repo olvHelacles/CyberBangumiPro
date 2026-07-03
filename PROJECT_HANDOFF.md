@@ -1,4 +1,4 @@
-# CyberBangumi Pro v0.6.1 项目实现与约定（单文件交接）
+# CyberBangumi Pro v0.7.0 项目实现与约定（单文件交接）
 
 本文件用于在新对话窗口中快速恢复项目上下文，覆盖当前实现、约定、数据结构和后续改动注意事项。
 
@@ -45,7 +45,7 @@
 
 - SubjectItem: 条目基础信息（id、名称、链接、封面、更新时间、本地封面路径）。
 - DaySchedule: 周几 -> 条目列表。
-- SubjectProgress: 进度、评分、评论、每集标题映射等。
+- SubjectProgress: 进度、评分、评论、每集标题映射、latestAiredAt（最新放送时间 DateTime，用于排序）等。
 - WatchArchiveEntry: 归档实体。
 - SearchSubjectResult: 搜索结果（SubjectItem + ratingScore + airDate + popularity）。
 - SearchSubjectsResponse: 搜索结果分页包装（total + results）。
@@ -65,10 +65,11 @@
   - 日历来源: bgmlist.com/archive/<year>q<quarter>（HTML 解析）。
   - 半年番补充: bgmlist.com/api/v1/bangumi/onair（JSON API）。
   - 进度来源: Bangumi API。
-  - isSubjectStillAiring(): 通过 Bangumi API 分集进度判断番剧是否在播。
+  - isSubjectStillAiring(): 通过 Bangumi API 分集进度判断番剧是否在播。已加节流（_waitForRequestSlot），避免触发 429。
   - searchSubjects(): POST /v0/search/subjects，支持关键词搜索+type过滤+limit/offset分页+sort排序。
   - fetchSubjectFromApi(): GET /v0/subjects/{id} 获取完整条目 JSON。
   - fetchImageWithRetry(): 走代理的图片下载（用于封面缓存）。
+  - extractBangumiIdFromBgmListItem(): 公开方法，从 BGMLIST OnAir JSON 条目中提取 Bangumi ID。
 
 - ClashManager（lib/clash_manager.dart）:
   - 管理 mihomo 进程生命周期。
@@ -76,6 +77,10 @@
   - 支持订阅 URL 自动生成 clash 配置（proxy-providers + url-test）。
   - 通过 Clash REST API（127.0.0.1:57737）查询当前节点名和延迟。
   - 窗口关闭时同步 kill 子进程。
+  - URL 注入防护：applySubscription 校验订阅 URL 的 scheme 并拒绝非法字符。
+  - 配置重写：不再依赖 _configNeedsUpdate（子串判断易漏判），每次 start 都重写配置。
+  - 错误可见性：start() 捕获错误存入 _startupError，main() 打印到 stderr，_bootstrap() 转储到调试日志。
+  - HttpClient 泄漏修复：refreshNodeInfo 的 client.close() 移入 finally。
 
 ## 4. 关键业务流程
 
@@ -100,6 +105,7 @@ _bootstrap 顺序（runApp 后）:
 - 支持本地缓存优先，必要时网络刷新。
 - 每月 1 号可自动触发一次网络刷新。
 - 刷新后调用 _archiveMissingWatchlistItemsAfterCalendar。
+- isSubjectStillAiring 现在在 _checkSubjectStillAiring 层统一调用 _waitForRequestSlot() 节流。
 
 ### 4.3 日历数据流
 
@@ -107,7 +113,7 @@ _bootstrap 顺序（runApp 后）:
 BGMLIST Archive HTML  →  parseDailySchedule()  →  当季番剧
 BGMLIST OnAir JSON    →  _enrichWithOnAirShows()
                            ├─ 过滤一年内开播
-                           ├─ isSubjectStillAiring() 并发验证
+                           ├─ isSubjectStillAiring() 并发验证（已节流）
                            └─ 追加到周历
 _convertScheduleFromJstForDisplay()  →  时区转换
 _calendarCacheManager.save()        →  持久化
@@ -149,7 +155,7 @@ _applyScheduleData()                →  UI 刷新
 
 代理应用流程:
 1. 用户输入订阅 URL → 保存
-2. `applySubscription()` 生成含 `proxy-providers` 的 clash 配置
+2. `applySubscription()` 生成含 `proxy-providers` 的 clash 配置（校验 URL scheme）
 3. Clash 重启 → 通过 `url-test` 以 `api.bgm.tv` 为目标测速选优
 4. `health-check` 每 5 分钟检测节点可用性
 5. 所有 HTTP 请求走 `HttpClient.findProxy` → 127.0.0.1:7890
@@ -160,6 +166,33 @@ _applyScheduleData()                →  UI 刷新
 - 解决方案：通过 BangumiService.fetchImageWithRetry（走代理）下载 → CoverCacheManager.ensureCached 存本地 → Image.file 显示。
 - 搜索 Tab: _cacheSearchResultCovers() 串行下载，每张完成即 setState 实时刷出。
 - 其他 Tab: applyRealtimeUpdate() 在封面缓存完成后触发重建。
+- 注意：applyRealtimeUpdate 使用 _allItemsIndex / _todayItemsIndex / _watchlistIndex / _scheduleDataIndex 四个 Map 索引实现 O(1) 查找替换，避免旧版 indexWhere + 全量 map 的 O(n²) 开销。
+- 所有修改 _allItems / _todayItems / _watchlist / _scheduleData 的 setState 都必须同时调用 _rebuildAllIndices() 同步索引。
+
+### 4.8 AppBar 远程背景图
+
+- 支持 http/https URL 作为 AppBar/TabBar 背景图。
+- 通过 AppBarRemoteImage widget（lib/widgets/app_bar_remote_image.dart）渲染。
+- 内部使用独立 HttpClient 直连（不走 Clash 代理），带 8s 超时，超时/失败回退到纯色 fallback。
+
+### 4.9 关注页排序
+
+- 追番/补番统一使用 _watchlistLastUpdated 时间戳降序排列。
+- 时间戳在进度刷新、补番前进/后退时更新。
+- 补番操作的排序更新延迟生效：点击前进/后退后，当前排序冻结，下次 build 触发时刷新顺序。
+- 时间戳持久化到 app_state.json（watchlist_last_updated_v1 字段）。
+
+### 4.10 评分分布柱状图
+
+- 条目详情弹窗右侧展示 1-10 星评分分布柱状图。
+- 采用 Row + Container 小方块渲染（与分集评论柱状图架构一致），非 CustomPaint。
+- 删除底部"数字标注"行。
+- 鼠标悬停显示 "X分, XX人" 浮层。
+
+### 4.11 分集评论柱状图
+
+- SubjectTile 内嵌，展示每集评论热度。
+- 鼠标悬停显示 "第X集, 评论XXX" 浮层（含集数）。
 
 ## 5. 持久化结构约定
 
@@ -180,6 +213,14 @@ app_settings_v1 字段（完整）:
 - proxy_bypass: String
 - proxy_subscription_url: String（Clash 订阅链接）
 
+其他持久化字段:
+- progress_corrections_v1 / progress_correction_deltas_v1 / correction_base_v1: 手动进度修正
+- catch_up_progress_v1 / catch_up_total_eps_v1 / catch_up_titles_v1: 补番进度
+- watchlist_last_updated_v1: 关注列表排序时间戳
+- watchlist: 关注列表
+- calendar_auto_refresh_month / calendar_cache_timezone_token_v1: 日历缓存控制
+- progress_correction_storage_key / progress_correction_delta_storage_key / correction_base_storage_key
+
 ### 5.2 watch_archive.json / calendar_cache.json
 
 无变化。
@@ -192,23 +233,30 @@ app_settings_v1 字段（完整）:
 4. 修改关注/周历逻辑时保证 _scheduleData 与缓存回填一致。
 5. mihomo.exe 在首次运行时从 Flutter assets 提取到工作目录。
 6. 窗口关闭时同步调用 ClashManager.kill() 终止 mihomo 进程，不等待。
-7. 封面通过代理下载到本地后以 Image.file 显示，不使用 Image.network。
-8. **新功能隔离**：新功能（除非涉及核心状态/业务逻辑的深度改动）优先在 `lib/widgets/` 或 `lib/services/` 中实现，避免扩充 `lib/main.dart`。仅当改动直接涉及 `_BangumiHomePageState` 的核心状态字段（~60 个）或跨 Tab 的共享方法（如日历刷新、进度刷新、持久化）时才在 `lib/main.dart` 中添加代码。
+7. 封面通过代理下载到本地后以 Image.file 显示，不使用 Image.network。AppBar 背景图除外（直连 + 8s 超时）。
+8. **新功能隔离**：新功能（除非涉及核心状态/业务逻辑的深度改动）优先在 `lib/widgets/` 或 `lib/services/` 中实现，避免扩充 `lib/main.dart`。仅当改动直接涉及 `_BangumiHomePageState` 的核心状态字段或跨 Tab 的共享方法（如日历刷新、进度刷新、持久化）时才在 `lib/main.dart` 中添加代码。
+9. **索引同步**：任何修改 _allItems / _todayItems / _watchlist / _scheduleData 的 setState 必须同时调用 _rebuildAllIndices()，否则 applyRealtimeUpdate 的 O(1) 索引将指向过期位置。
+10. **Clash 配置重写**：applySubscription 每次 start 都重写配置（不再使用 _configNeedsUpdate 子串判断），写入前校验 URL scheme 和非法字符。
+11. **补番排序冻结**：补番操作的排序更新在当前会话中延迟生效（_sortFrozen 标志），避免点击前进/后退时列表立即跳动。
 
 ## 7. 调试能力
 
 - 日志窗口（网络/状态日志）
 - 调试今日星期
 - 调试归档
+- Clash 启动异常可见（调试日志第一条显示"代理: 启动阶段异常: ..."）
 
-## 8. 近期改动焦点（v0.5.0）
+## 8. 近期改动焦点（v0.7.0）
 
-- 番剧搜索: 新增 Tab 4，调用 POST /v0/search/subjects 搜索 Bangumi 条目，支持按热度排序、分页翻页、关注切换。
-- 条目详情弹窗: 点击封面/标题弹出，展示评分分布柱状图(1-10星)、信息徽章、类型标签、制作信息、可展开简介(含复制按钮)、关注按钮。
-- 封面加载重构: 所有 Tab 封面改为通过 BangumiService 代理下载 + CoverCacheManager 本地缓存 + Image.file 显示，解决 Image.network 不走代理的问题。
-- 实时刷出: 每张封面下载完成后通过 setState + applyRealtimeUpdate 立即显示，无需重启。
-- 代码拆分: main.dart 拆分为分层架构(models/stores/services/widgets)。
-- API 文档: 新增 docs/v0.yaml 作为开发参考。
+- **ClashManager 安全加固**：URL 注入防护、HttpClient 泄漏修复、配置重写不再依赖子串匹配、启动错误可见化。
+- **OnAir 节流**：_checkSubjectStillAiring 统一调用 _waitForRequestSlot()，避免半年番补充触发 Bangumi API 429。
+- **封面缓存 O(n²) → O(1)**：新增 _rebuildAllIndices() 和四个 Map 索引，applyRealtimeUpdate 每次更新从 4 次 indexWhere + 全量 map 降为单次 Map 查找 + 原位替换。
+- **代码清理**：重复日志删除、_parseUpdateTimeMinutes 抽到 constants、search_tab 排序逻辑抽取为 _sortResults、CoverCacheManager 死分支清理、main.dart.backup 删除。
+- **bangumi-id 提取复用**：_extractBangumiIdFromBgmListItem 公开化，_enrichWithOnAirShows 两处内联提取替换为 service 调用。
+- **评分分布柱状图重构**：从 CustomPaint 迁移到 Row + Container 渲染，删除底部数字标注，添加鼠标悬停浮层（X分, XX人）。
+- **分集评论柱状图强化**：鼠标悬停浮层增加集数显示（"第X集, 评论XXX"）。
+- **关注页排序重构**：追番/补番统一使用 _watchlistLastUpdated 时间戳降序排列，补番操作的排序延迟生效（_sortFrozen 冻结机制），时间戳持久化。
+- **AppBar 远程背景图超时**：新增 AppBarRemoteImage widget，直连 + 8s 超时，超时/失败回退到纯色。
 
 ## 9. 后续改动清单
 
@@ -218,6 +266,7 @@ app_settings_v1 字段（完整）:
 4. 修改网络头时，确认 API 与页面抓取 UA 的隔离未被破坏。
 5. 提交前至少执行 flutter analyze 与目标测试。
 6. 修改搜索相关逻辑时，注意 BangumiService.searchSubjects 的 limit 为 query parameter 而非 body field。
+7. 修改 _allItems/_todayItems/_watchlist/_scheduleData 时别忘了同步 _rebuildAllIndices()。
 
 ## 10. 新会话接力模板
 
@@ -228,6 +277,7 @@ app_settings_v1 字段（完整）:
 3. 手动修正进度逻辑不得回退。
 4. 修改代理/Clash 逻辑时保证 ClashManager 生命周期与 app 一致。
 5. 窗口关闭时必须同步终止 mihomo 进程（ClashManager.kill()）。
+6. 修改 _allItems 等列表后必须同步调用 _rebuildAllIndices()。
 
 ## 11. Release 构建
 

@@ -28,9 +28,12 @@ class ClashManager {
   String _currentNode = '';
   int _currentLatency = 0;
 
+  String? _startupError;
+
   bool get isRunning => _process != null;
   String get currentNode => _currentNode;
   int get currentLatency => _currentLatency;
+  String? get startupError => _startupError;
 
   /// Query the Clash REST API for the current proxy node and its latency.
   Future<void> refreshNodeInfo() async {
@@ -42,63 +45,68 @@ class ClashManager {
     try {
       final HttpClient client = HttpClient();
       client.connectionTimeout = const Duration(seconds: 3);
-
-      // Get the current node from the "Proxy" group.
-      final Uri groupUri = Uri(
-        scheme: 'http',
-        host: _apiHost,
-        port: _apiPort,
-        path: '/proxies/Proxy',
-      );
-      late final String now;
       try {
-        final HttpClientRequest req = await client.getUrl(groupUri);
-        req.headers.set('Authorization', 'Bearer $_apiSecret');
-        final HttpClientResponse resp = await req.close();
-        final String body = await resp.transform(utf8.decoder).join();
+        // Get the current node from the "Proxy" group.
+        final Uri groupUri = Uri(
+          scheme: 'http',
+          host: _apiHost,
+          port: _apiPort,
+          path: '/proxies/Proxy',
+        );
+        late final String now;
+        try {
+          final HttpClientRequest req = await client.getUrl(groupUri);
+          req.headers.set('Authorization', 'Bearer $_apiSecret');
+          final HttpClientResponse resp = await req.close();
+          final String body = await resp.transform(utf8.decoder).join();
 
-        if (resp.statusCode == 200) {
-          final Map<String, dynamic> data = jsonDecode(body)
-              as Map<String, dynamic>;
-          now = data['now'] as String? ?? '';
-        } else {
-          now = '';
+          if (resp.statusCode == 200) {
+            final Map<String, dynamic> data = jsonDecode(body)
+                as Map<String, dynamic>;
+            now = data['now'] as String? ?? '';
+          } else {
+            now = '';
+          }
+        } finally {
+          // First request done; client still open for second request.
+        }
+
+        if (now.isNotEmpty) {
+          _currentNode = now;
+          _currentLatency = 0;
+
+          // Query the individual proxy for its latest delay.
+          try {
+            final Uri proxyUri = Uri(
+              scheme: 'http',
+              host: _apiHost,
+              port: _apiPort,
+              path: '/proxies/$now',
+            );
+            final HttpClientRequest req2 = await client.getUrl(proxyUri);
+            req2.headers.set('Authorization', 'Bearer $_apiSecret');
+            final HttpClientResponse resp2 = await req2.close();
+            final String body2 = await resp2.transform(utf8.decoder).join();
+            if (resp2.statusCode == 200) {
+              final Map<String, dynamic> proxyData = jsonDecode(body2)
+                  as Map<String, dynamic>;
+              final List<dynamic> history = proxyData['history']
+                      as List<dynamic>? ??
+                  <dynamic>[];
+              if (history.isNotEmpty) {
+                final Map<String, dynamic> last =
+                    history.last as Map<String, dynamic>;
+                _currentLatency =
+                    (last['delay'] as num?)?.toInt() ?? 0;
+              }
+            }
+          } catch (_) {
+            // Non-fatal; refresh will be retried.
+          }
         }
       } finally {
-        // First request done; client still open for second request.
+        client.close();
       }
-
-      if (now.isNotEmpty) {
-        _currentNode = now;
-        _currentLatency = 0;
-
-        // Query the individual proxy for its latest delay.
-        try {
-          final Uri proxyUri = Uri(
-            scheme: 'http',
-            host: _apiHost,
-            port: _apiPort,
-            path: '/proxies/$now',
-          );
-          final HttpClientRequest req2 = await client.getUrl(proxyUri);
-          req2.headers.set('Authorization', 'Bearer $_apiSecret');
-          final HttpClientResponse resp2 = await req2.close();
-          final String body2 = await resp2.transform(utf8.decoder).join();
-          if (resp2.statusCode == 200) {
-            final Map<String, dynamic> proxyData = jsonDecode(body2)
-                as Map<String, dynamic>;
-            final List<dynamic> history = proxyData['history'] as List<dynamic>? ?? <dynamic>[];
-            if (history.isNotEmpty) {
-              final Map<String, dynamic> last = history.last as Map<String, dynamic>;
-              _currentLatency = (last['delay'] as num?)?.toInt() ?? 0;
-            }
-          }
-        } catch (_) {
-          // Non-fatal; refresh will be retried.
-        }
-      }
-
-      client.close();
     } catch (_) {
       // Non-fatal; refresh will be retried on next dialog open.
     }
@@ -114,12 +122,12 @@ class ClashManager {
       return true;
     }
     _started = true;
+    _startupError = null;
 
     try {
       await _extractBinary();
       if (savedSubscriptionUrl != null &&
-          savedSubscriptionUrl.trim().isNotEmpty &&
-          await _configNeedsUpdate(savedSubscriptionUrl.trim())) {
+          savedSubscriptionUrl.trim().isNotEmpty) {
         await applySubscription(savedSubscriptionUrl.trim());
       } else {
         await _ensureConfig();
@@ -129,6 +137,7 @@ class ClashManager {
       return true;
     } catch (e) {
       _started = false;
+      _startupError = e.toString();
       rethrow;
     }
   }
@@ -182,6 +191,16 @@ class ClashManager {
     if (subscriptionUrl == null || subscriptionUrl.trim().isEmpty) return;
     final String url = subscriptionUrl.trim();
 
+    final Uri? parsed = Uri.tryParse(url);
+    if (parsed == null ||
+        !parsed.hasScheme ||
+        (parsed.scheme != 'http' && parsed.scheme != 'https')) {
+      throw ArgumentError('订阅 URL 无效: "$url"，仅支持 http/https 协议');
+    }
+    if (url.contains("'") || url.contains('\n') || url.contains('\r')) {
+      throw ArgumentError('订阅 URL 包含不合法字符: "$url"');
+    }
+
     final String workDir = Directory.current.path;
     const String configName = 'clash_config.yaml';
     final String configPath =
@@ -201,7 +220,7 @@ secret: "cbgm-pro-clash"
 proxy-providers:
   sub:
     type: http
-    url: "$url"
+    url: '$url'
     interval: 86400
     path: ./sub_provider.yaml
     health-check:
@@ -224,22 +243,6 @@ rules:
 
     await File(configPath).writeAsString(newConfig, flush: true);
     _configPath = configPath;
-  }
-
-  /// Returns true when the current config file does not already contain the
-  /// given [subscriptionUrl], so a rewrite + restart is worthwhile.
-  Future<bool> _configNeedsUpdate(String subscriptionUrl) async {
-    final String workDir = Directory.current.path;
-    final File config = File(
-      '$workDir${Platform.pathSeparator}$_configName',
-    );
-    if (!await config.exists()) return true;
-    try {
-      final String content = await config.readAsString();
-      return !content.contains(subscriptionUrl);
-    } catch (_) {
-      return true;
-    }
   }
 
   Future<void> _extractBinary() async {

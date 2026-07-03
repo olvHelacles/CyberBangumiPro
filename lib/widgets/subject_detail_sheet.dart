@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -39,6 +40,7 @@ class _SubjectDetailSheetState extends State<SubjectDetailSheet> {
   bool _loading = true;
   String? _localCoverPath;
   bool _summaryExpanded = false;
+  int? _hoveredRatingBarIndex;
 
   @override
   void initState() {
@@ -354,43 +356,171 @@ class _SubjectDetailSheetState extends State<SubjectDetailSheet> {
             child: LayoutBuilder(
               builder: (BuildContext context, BoxConstraints constraints) {
                 final double availableWidth = constraints.maxWidth;
-                const double barCount = 10;
+                const int barCount = 10;
                 final double effectiveGap = chartLayout.barGap;
                 final double totalGap = effectiveGap * (barCount - 1);
-                final double barWidth = ((availableWidth - totalGap) / barCount).clamp(2.0, double.infinity);
-                const double labelHeight = 12;
+                final double barWidth =
+                    ((availableWidth - totalGap) / barCount)
+                        .clamp(2.0, double.infinity);
+                const double labelHeight = 3;
                 final List<int> reversed = List<int>.from(values.reversed);
+                final int maxCountForBars = maxCount > 0 ? maxCount : 1;
+                final double chartBarsHeight =
+                    (constraints.maxHeight - labelHeight - 2)
+                        .clamp(0, double.infinity);
+                final double totalBarWidth =
+                    barCount * barWidth + totalGap;
+                final double startX =
+                    (availableWidth - totalBarWidth) / 2;
+                final double step = barWidth + effectiveGap;
+
                 return Column(
                   crossAxisAlignment: CrossAxisAlignment.end,
                   children: <Widget>[
                     Expanded(
-                      child: CustomPaint(
-                        size: Size(availableWidth, (constraints.maxHeight - labelHeight).clamp(0, double.infinity)),
-                        painter: _RatingBarPainter(
-                          values: reversed,
-                          maxCount: maxCount > 0 ? maxCount : 1,
-                          barWidth: barWidth,
-                          chartBarsHeight: (constraints.maxHeight - labelHeight - 2).clamp(0, double.infinity),
-                          effectiveGap: effectiveGap,
-                          minBarHeight: chartLayout.minBarHeight,
-                          baseColor: colors.primary,
+                      child: MouseRegion(
+                        opaque: true,
+                        onExit: (_) {
+                          setState(
+                              () => _hoveredRatingBarIndex = null);
+                        },
+                        onHover: (PointerEvent event) {
+                          final bool insideBarRegion =
+                              event.localPosition.dy >= 0 &&
+                                  event.localPosition.dy <=
+                                      chartBarsHeight;
+                          int? index;
+                          if (insideBarRegion) {
+                            final double relativeX = event
+                                .localPosition.dx
+                                .clamp(0.0, availableWidth);
+                            final double step =
+                                barWidth + effectiveGap;
+                            int computed = step <= 0
+                                ? 0
+                                : (relativeX / step).floor();
+                            computed =
+                                computed.clamp(0, barCount - 1);
+                            index = computed;
+                          }
+                          if (index != _hoveredRatingBarIndex) {
+                            setState(
+                                () => _hoveredRatingBarIndex = index);
+                          }
+                        },
+                        child: Stack(
+                          clipBehavior: Clip.none,
+                          children: <Widget>[
+                            Padding(
+                              padding: EdgeInsets.only(
+                                left: startX > 0 ? startX : 0,
+                              ),
+                              child: Row(
+                                crossAxisAlignment:
+                                    CrossAxisAlignment.end,
+                                children: List<Widget>.generate(
+                                    barCount, (int i) {
+                                  final int value = reversed[i];
+                                  final double ratio =
+                                      maxCountForBars <= 0
+                                          ? 0.08
+                                          : value <= 0
+                                              ? 0.08
+                                              : value /
+                                                  maxCountForBars;
+                                  final Color barColor =
+                                      Color.lerp(
+                                            colors.primary
+                                                .withValues(
+                                                    alpha: 0.25),
+                                            colors.primary,
+                                            ratio.clamp(0.0, 1.0),
+                                          ) ??
+                                          colors.primary;
+                                  final double cellWidth = barWidth +
+                                      (i == barCount - 1
+                                          ? 0
+                                          : effectiveGap);
+
+                                  return SizedBox(
+                                    width: cellWidth,
+                                    height: chartBarsHeight,
+                                    child: Align(
+                                      alignment:
+                                          Alignment.bottomCenter,
+                                      child: Container(
+                                        width: barWidth,
+                                        height: math.max(
+                                          chartLayout.minBarHeight,
+                                          chartBarsHeight * ratio,
+                                        ),
+                                        decoration: BoxDecoration(
+                                          color: barColor,
+                                          borderRadius:
+                                              BorderRadius.circular(
+                                                  2),
+                                        ),
+                                      ),
+                                    ),
+                                  );
+                                }),
+                              ),
+                            ),
+                            if (_hoveredRatingBarIndex != null)
+                              Positioned(
+                                top: -4,
+                                left: (() {
+                                  final double center =
+                                      _hoveredRatingBarIndex! *
+                                              step +
+                                          barWidth / 2;
+                                  const double tooltipWidth = 96;
+                                  return (center -
+                                          tooltipWidth / 2)
+                                      .clamp(
+                                          0.0,
+                                          math.max(
+                                                  0.0,
+                                                  availableWidth -
+                                                      tooltipWidth))
+                                      .toDouble();
+                                })(),
+                                child: IgnorePointer(
+                                  child: Container(
+                                    width: 96,
+                                    padding: const EdgeInsets
+                                        .symmetric(
+                                        horizontal: 8,
+                                        vertical: 4),
+                                    decoration: BoxDecoration(
+                                      color: Theme.of(context)
+                                          .colorScheme
+                                          .inverseSurface,
+                                      borderRadius:
+                                          BorderRadius.circular(6),
+                                    ),
+                                    child: Text(
+                                      '${10 - _hoveredRatingBarIndex!}分, '
+                                      '${reversed[_hoveredRatingBarIndex!]}人',
+                                      textAlign: TextAlign.center,
+                                      style: Theme.of(context)
+                                          .textTheme
+                                          .labelSmall
+                                          ?.copyWith(
+                                        color: Theme.of(context)
+                                            .colorScheme
+                                            .onInverseSurface,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                          ],
                         ),
                       ),
                     ),
-                    Row(
-                      children: List<Widget>.generate(10, (int i) {
-                        return Expanded(
-                          child: Text(
-                            '${10 - i}',
-                            textAlign: TextAlign.center,
-                            style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                              fontSize: 9,
-                              color: colors.onSurfaceVariant,
-                            ),
-                          ),
-                        );
-                      }),
-                    ),
+                    SizedBox(height: labelHeight),
                   ],
                 );
               },
@@ -568,56 +698,3 @@ class _RatingChartLayout {
   final double contentPaddingVertical;
 }
 
-/// 评分分布柱状图 CustomPainter
-class _RatingBarPainter extends CustomPainter {
-  _RatingBarPainter({
-    required this.values,
-    required this.maxCount,
-    required this.barWidth,
-    required this.chartBarsHeight,
-    required this.effectiveGap,
-    required this.minBarHeight,
-    required this.baseColor,
-  });
-
-  final List<int> values;
-  final int maxCount;
-  final double barWidth;
-  final double chartBarsHeight;
-  final double effectiveGap;
-  final double minBarHeight;
-  final Color baseColor;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    if (values.isEmpty || maxCount <= 0) return;
-    final Paint paint = Paint()..style = PaintingStyle.fill;
-    final double startX = (size.width - _totalWidth) / 2;
-    for (int i = 0; i < values.length; i++) {
-      final double ratio = values[i] <= 0 ? 0.08 : values[i] / maxCount;
-      final double barHeight = (chartBarsHeight * ratio).clamp(minBarHeight, chartBarsHeight);
-      final Color color = Color.lerp(
-        baseColor.withValues(alpha: 0.25), baseColor, ratio.clamp(0.0, 1.0),
-      ) ?? baseColor;
-      paint.color = color;
-      final double x = startX + i * (barWidth + effectiveGap);
-      canvas.drawRRect(
-        RRect.fromRectAndRadius(Rect.fromLTWH(x, chartBarsHeight - barHeight, barWidth, barHeight), const Radius.circular(2)),
-        paint,
-      );
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant _RatingBarPainter oldDelegate) {
-    return oldDelegate.values != values ||
-        oldDelegate.maxCount != maxCount ||
-        oldDelegate.barWidth != barWidth ||
-        oldDelegate.chartBarsHeight != chartBarsHeight ||
-        oldDelegate.effectiveGap != effectiveGap ||
-        oldDelegate.minBarHeight != minBarHeight ||
-        oldDelegate.baseColor != baseColor;
-  }
-
-  double get _totalWidth => values.length * barWidth + (values.length - 1) * effectiveGap;
-}

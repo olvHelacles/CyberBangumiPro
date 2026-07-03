@@ -27,6 +27,7 @@ import 'widgets/watch_tab.dart';
 import 'widgets/week_calendar_tab.dart';
 import 'widgets/search_tab.dart';
 import 'widgets/settings_dialog.dart';
+import 'widgets/app_bar_remote_image.dart';
 import 'widgets/debug_tools.dart';
 
 TextStyle _styleWithWeight(TextStyle? base, FontWeight weight) {
@@ -44,18 +45,15 @@ class _BottomEdgeOnlyClipper extends CustomClipper<Rect> {
   static const double _topAllowance = 4096;
 
   @override
-  
   Rect getClip(Size size) {
     return Rect.fromLTRB(0, -_topAllowance, size.width, size.height);
   }
 
   @override
-  
   bool shouldReclip(covariant CustomClipper<Rect> oldClipper) {
     return false;
   }
 }
-
 
 TextTheme buildUnifiedTextTheme(TextTheme base) {
   return base.copyWith(
@@ -77,7 +75,6 @@ TextTheme buildUnifiedTextTheme(TextTheme base) {
   );
 }
 
-
 ThemeMode themeModeFromStorageValue(String raw) {
   switch (raw.trim().toLowerCase()) {
     case 'light':
@@ -88,7 +85,6 @@ ThemeMode themeModeFromStorageValue(String raw) {
       return ThemeMode.system;
   }
 }
-
 
 String themeModeToStorageValue(ThemeMode mode) {
   switch (mode) {
@@ -101,7 +97,6 @@ String themeModeToStorageValue(ThemeMode mode) {
   }
 }
 
-
 String themeModeDisplayText(ThemeMode mode) {
   switch (mode) {
     case ThemeMode.system:
@@ -112,7 +107,6 @@ String themeModeDisplayText(ThemeMode mode) {
       return '深色模式';
   }
 }
-
 
 ThemeData buildAppTheme(Brightness brightness) {
   final ThemeData base = ThemeData(useMaterial3: true, brightness: brightness);
@@ -137,15 +131,13 @@ ThemeData buildAppTheme(Brightness brightness) {
       foregroundColor: appBarForeground,
       iconTheme: IconThemeData(color: appBarForeground, weight: 300),
       actionsIconTheme: IconThemeData(color: appBarForeground, weight: 300),
-      titleTextStyle: _styleWithWeight(
-        baseTextTheme.titleLarge,
-        FontWeight.w500,
-      ).copyWith(
-        fontSize: 20,
-        fontFamily: '29LT Bukra',
-        fontStyle: FontStyle.italic,
-        color: appBarForeground,
-      ),
+      titleTextStyle:
+          _styleWithWeight(baseTextTheme.titleLarge, FontWeight.w500).copyWith(
+            fontSize: 20,
+            fontFamily: '29LT Bukra',
+            fontStyle: FontStyle.italic,
+            color: appBarForeground,
+          ),
     ),
     tabBarTheme: TabBarThemeData(
       labelColor: appBarForeground,
@@ -178,6 +170,7 @@ Future<void> main() async {
   try {
     await ClashManager.instance.start();
   } catch (e) {
+    debugPrint('[CyberBangumi] Clash 启动失败: $e');
     // Non-fatal: the app can still work if an external proxy is already
     // running on the configured port.
   }
@@ -238,7 +231,6 @@ class _BangumiAppState extends State<BangumiApp> {
     });
   }
 
-  
   void _onThemeModeChanged(ThemeMode mode) {
     if (_themeMode == mode) {
       return;
@@ -247,7 +239,6 @@ class _BangumiAppState extends State<BangumiApp> {
       _themeMode = mode;
     });
   }
-
 
   @override
   /// 构建当前组件的界面结构。
@@ -285,7 +276,7 @@ class BangumiHomePage extends StatefulWidget {
 
 /// _BangumiHomePageState
 class _BangumiHomePageState extends State<BangumiHomePage>
-  with WidgetsBindingObserver {
+    with WidgetsBindingObserver {
   static const String _appBarLogoAsset = 'assets/images/logoWHT.svg';
   static const BoxFit _appBarBackgroundImageFit = BoxFit.cover;
   static const double _appBarLogoWidth = 140;
@@ -296,7 +287,6 @@ class _BangumiHomePageState extends State<BangumiHomePage>
   static const double _appBarLogoGapAboveTabBar = 2;
   static const Alignment _appBarLogoAlignment = Alignment.centerLeft;
   static const EdgeInsets _appBarLogoPadding = EdgeInsets.only(left: 0);
-
 
   final BangumiService _service = BangumiService();
   final CoverCacheManager _coverCacheManager = CoverCacheManager();
@@ -342,20 +332,32 @@ class _BangumiHomePageState extends State<BangumiHomePage>
   List<SubjectItem> _allItems = <SubjectItem>[];
   List<SubjectItem> _todayItems = <SubjectItem>[];
   List<SubjectItem> _watchlist = <SubjectItem>[];
+
+  // Indices for O(1) lookups in applyRealtimeUpdate.
+  Map<String, int> _allItemsIndex = <String, int>{};
+  Map<String, int> _todayItemsIndex = <String, int>{};
+  Map<String, int> _watchlistIndex = <String, int>{};
+  Map<String, Map<String, int>> _scheduleDataIndex =
+      <String, Map<String, int>>{};
   final Map<String, SubjectProgress> _progressCache =
       <String, SubjectProgress>{};
-    final Map<String, SubjectProgress> _rawProgressCache =
+  final Map<String, SubjectProgress> _rawProgressCache =
       <String, SubjectProgress>{};
-    final Map<String, int> _legacyAbsoluteProgressCorrections =
-      <String, int>{};
-    bool _progressCorrectionMigrationDirty = false;
-    Map<String, int> _manualProgressCorrections = <String, int>{};
+  final Map<String, int> _legacyAbsoluteProgressCorrections = <String, int>{};
+  bool _progressCorrectionMigrationDirty = false;
+  Map<String, int> _manualProgressCorrections = <String, int>{};
+  Map<String, int> _correctionBaseTheoretical = <String, int>{};
+  Map<String, int> _catchUpProgress = <String, int>{};
+  Map<String, int> _catchUpTotalEps = <String, int>{};
+  Map<String, DateTime> _watchlistLastUpdated = <String, DateTime>{};
+  Map<String, Map<int, String>> _catchUpTitles = <String, Map<int, String>>{};
   Set<String> _selectedIds = <String>{};
   int? _debugWeekdayOverride;
 
   String get _systemWeekday {
-    final DateTime now =
-        DateTime.now().toUtc().add(Duration(minutes: _effectiveDisplayTimezoneOffsetMinutes));
+    final DateTime now = DateTime.now().toUtc().add(
+      Duration(minutes: _effectiveDisplayTimezoneOffsetMinutes),
+    );
     return weekdayMap[now.weekday] ?? '未知';
   }
 
@@ -422,7 +424,6 @@ class _BangumiHomePageState extends State<BangumiHomePage>
     }
   }
 
-  
   void _onNetworkActivityChanged() {
     final int activeCount = _service.activeRequests.value;
     if (_lastLoggedActiveRequests != activeCount) {
@@ -487,7 +488,6 @@ class _BangumiHomePageState extends State<BangumiHomePage>
     });
   }
 
-  
   String _debugTimestamp() {
     final DateTime now = DateTime.now();
     final String hh = now.hour.toString().padLeft(2, '0');
@@ -496,7 +496,6 @@ class _BangumiHomePageState extends State<BangumiHomePage>
     return '$hh:$mm:$ss';
   }
 
-  
   void _appendDebugLog(String message) {
     _debugLogs.add('[${_debugTimestamp()}] $message');
     if (_debugLogs.length > _maxDebugLogEntries) {
@@ -506,6 +505,10 @@ class _BangumiHomePageState extends State<BangumiHomePage>
 
   Future<void> _bootstrap() async {
     _appendDebugLog('开始初始化');
+    final String? startupError = ClashManager.instance.startupError;
+    if (startupError != null && startupError.isNotEmpty) {
+      _appendDebugLog('代理: 启动阶段异常: $startupError');
+    }
     await _loadSettings();
     // Re-apply the saved subscription URL so clash starts with usable nodes.
     if (_settingProxySubscriptionUrl.trim().isNotEmpty &&
@@ -553,17 +556,14 @@ class _BangumiHomePageState extends State<BangumiHomePage>
     await _refreshProgressFromMainAction();
   }
 
-  
   int _clampProgressConcurrency(int value) {
     return value.clamp(1, 30);
   }
 
-  
   int _clampCoverCacheConcurrency(int value) {
     return value.clamp(1, 24);
   }
 
-  
   int _clampTimezoneOffsetMinutes(int value) {
     return BroadcastTimeConverter.normalizeTimezoneOffsetMinutes(value);
   }
@@ -573,12 +573,12 @@ class _BangumiHomePageState extends State<BangumiHomePage>
       ? _settingTimezoneOffsetMinutes
       : BroadcastTimeConverter.jstOffsetMinutes;
 
-  String get _currentTimezoneFullLabel =>
-      _settingTimezoneConversionEnabled
-      ? BroadcastTimeConverter.formatUtcOffsetLabel(_settingTimezoneOffsetMinutes)
+  String get _currentTimezoneFullLabel => _settingTimezoneConversionEnabled
+      ? BroadcastTimeConverter.formatUtcOffsetLabel(
+          _settingTimezoneOffsetMinutes,
+        )
       : 'JST (${BroadcastTimeConverter.formatUtcOffsetLabel(BroadcastTimeConverter.jstOffsetMinutes)})';
 
-  
   String _calendarCacheTimezoneToken() {
     return '${_settingTimezoneConversionEnabled ? 1 : 0}:$_effectiveDisplayTimezoneOffsetMinutes';
   }
@@ -626,7 +626,8 @@ class _BangumiHomePageState extends State<BangumiHomePage>
       for (final SubjectItem item in day.items) {
         String weekday = day.weekday;
         String time = item.updateTime;
-        if (day.weekday.trim().isNotEmpty && item.updateTime.trim().isNotEmpty) {
+        if (day.weekday.trim().isNotEmpty &&
+            item.updateTime.trim().isNotEmpty) {
           final ConvertedWeekdayTime? converted =
               BroadcastTimeConverter.convertWeekdayAndTime(
                 weekday: day.weekday,
@@ -640,15 +641,17 @@ class _BangumiHomePageState extends State<BangumiHomePage>
           }
         }
 
-        grouped.putIfAbsent(weekday, () => <SubjectItem>[]).add(
-          item.copyWith(updateTime: time),
-        );
+        grouped
+            .putIfAbsent(weekday, () => <SubjectItem>[])
+            .add(item.copyWith(updateTime: time));
       }
     }
 
     final List<DaySchedule> converted = <DaySchedule>[];
     for (final String day in orderedWeekdays) {
-      converted.add(DaySchedule(weekday: day, items: grouped[day] ?? <SubjectItem>[]));
+      converted.add(
+        DaySchedule(weekday: day, items: grouped[day] ?? <SubjectItem>[]),
+      );
       grouped.remove(day);
     }
     grouped.forEach((String day, List<SubjectItem> items) {
@@ -659,7 +662,9 @@ class _BangumiHomePageState extends State<BangumiHomePage>
 
   Future<void> _loadSettings() async {
     final Map<String, dynamic> state = await _appStateStore.readState();
-    final String raw = jsonEncode(state[settingsStorageKey] ?? <String, dynamic>{});
+    final String raw = jsonEncode(
+      state[settingsStorageKey] ?? <String, dynamic>{},
+    );
     Map<String, dynamic> jsonMap = <String, dynamic>{};
     try {
       final dynamic decoded = jsonDecode(raw);
@@ -678,15 +683,15 @@ class _BangumiHomePageState extends State<BangumiHomePage>
       (jsonMap['cover_cache_concurrency'] as num?)?.toInt() ??
           defaultSettingCoverCacheConcurrency,
     );
-    _settingApiUserAgent = (jsonMap['api_user_agent'] as String? ?? appUserAgent)
-      .trim();
+    _settingApiUserAgent =
+        (jsonMap['api_user_agent'] as String? ?? appUserAgent).trim();
     _settingThemeMode = themeModeFromStorageValue(
       (jsonMap[themeModeSettingKey] as String? ?? ''),
     );
     _settingAppBarBackgroundImageEnabled =
-      (jsonMap[appBarBackgroundImageEnabledSettingKey] as bool?) ?? false;
+        (jsonMap[appBarBackgroundImageEnabledSettingKey] as bool?) ?? false;
     _settingAppBarBackgroundImagePath =
-      (jsonMap[appBarBackgroundImagePathSettingKey] as String? ?? '').trim();
+        (jsonMap[appBarBackgroundImagePathSettingKey] as String? ?? '').trim();
     _settingTimezoneConversionEnabled =
         (jsonMap[timezoneConversionEnabledSettingKey] as bool?) ??
         defaultSettingTimezoneConversionEnabled;
@@ -695,20 +700,25 @@ class _BangumiHomePageState extends State<BangumiHomePage>
           defaultSettingTimezoneOffsetMinutes,
     );
     _settingProxyEnabled =
-        (jsonMap[proxyEnabledSettingKey] as bool?) ?? defaultSettingProxyEnabled;
+        (jsonMap[proxyEnabledSettingKey] as bool?) ??
+        defaultSettingProxyEnabled;
     _settingProxyHost =
-        (jsonMap[proxyHostSettingKey] as String? ?? defaultSettingProxyHost).trim();
+        (jsonMap[proxyHostSettingKey] as String? ?? defaultSettingProxyHost)
+            .trim();
     _settingProxyPort =
-        (jsonMap[proxyPortSettingKey] as num?)?.toInt() ?? defaultSettingProxyPort;
+        (jsonMap[proxyPortSettingKey] as num?)?.toInt() ??
+        defaultSettingProxyPort;
     _settingProxyBypass =
-        (jsonMap[proxyBypassSettingKey] as String? ?? defaultSettingProxyBypass).trim();
+        (jsonMap[proxyBypassSettingKey] as String? ?? defaultSettingProxyBypass)
+            .trim();
     _settingProxySubscriptionUrl =
-        (jsonMap[proxySubscriptionUrlSettingKey] as String? ?? defaultSettingProxySubscriptionUrl)
+        (jsonMap[proxySubscriptionUrlSettingKey] as String? ??
+                defaultSettingProxySubscriptionUrl)
             .trim();
 
     _service.apiUserAgent = _settingApiUserAgent.isEmpty
-      ? appUserAgent
-      : _settingApiUserAgent;
+        ? appUserAgent
+        : _settingApiUserAgent;
     _service.updateProxySettings(
       _settingProxyEnabled,
       _settingProxyHost,
@@ -791,6 +801,102 @@ class _BangumiHomePageState extends State<BangumiHomePage>
       ..addAll(legacy);
     _manualProgressCorrections = delta;
     _progressCorrectionMigrationDirty = false;
+
+    // Load correction base theoretical values.
+    final String baseRaw = jsonEncode(
+      state[correctionBaseStorageKey] ?? <String, dynamic>{},
+    );
+    final Map<String, int> bases = <String, int>{};
+    try {
+      final dynamic decodedBase = jsonDecode(baseRaw);
+      if (decodedBase is Map<String, dynamic>) {
+        decodedBase.forEach((String key, dynamic value) {
+          final int? parsed = (value as num?)?.toInt();
+          if (key.isNotEmpty && parsed != null) {
+            bases[key] = parsed;
+          }
+        });
+      }
+    } catch (_) {}
+    _correctionBaseTheoretical = bases;
+
+    // Load catch-up progress.
+    final String catchUpRaw = jsonEncode(
+      state[catchUpProgressStorageKey] ?? <String, dynamic>{},
+    );
+    final Map<String, int> catchUp = <String, int>{};
+    try {
+      final dynamic decodedCatchUp = jsonDecode(catchUpRaw);
+      if (decodedCatchUp is Map<String, dynamic>) {
+        decodedCatchUp.forEach((String key, dynamic value) {
+          final int? parsed = (value as num?)?.toInt();
+          if (key.isNotEmpty && parsed != null && parsed > 0) {
+            catchUp[key] = parsed;
+          }
+        });
+      }
+    } catch (_) {}
+    _catchUpProgress = catchUp;
+
+    // Load catch-up total episodes.
+    final String totalRaw = jsonEncode(
+      state[catchUpTotalEpsStorageKey] ?? <String, dynamic>{},
+    );
+    final Map<String, int> totalEps = <String, int>{};
+    try {
+      final dynamic decodedTotal = jsonDecode(totalRaw);
+      if (decodedTotal is Map<String, dynamic>) {
+        decodedTotal.forEach((String key, dynamic value) {
+          final int? parsed = (value as num?)?.toInt();
+          if (key.isNotEmpty && parsed != null && parsed > 0) {
+            totalEps[key] = parsed;
+          }
+        });
+      }
+    } catch (_) {}
+    _catchUpTotalEps = totalEps;
+
+    // Load catch-up episode titles.
+    final String titlesRaw = jsonEncode(
+      state[catchUpTitlesStorageKey] ?? <String, dynamic>{},
+    );
+    final Map<String, Map<int, String>> titles = <String, Map<int, String>>{};
+    try {
+      final dynamic decodedTitles = jsonDecode(titlesRaw);
+      if (decodedTitles is Map<String, dynamic>) {
+        decodedTitles.forEach((String sid, dynamic entry) {
+          if (entry is Map<String, dynamic>) {
+            final Map<int, String> epMap = <int, String>{};
+            entry.forEach((String epStr, dynamic title) {
+              final int? ep = int.tryParse(epStr);
+              if (ep != null && title is String && title.isNotEmpty) {
+                epMap[ep] = title;
+              }
+            });
+            if (epMap.isNotEmpty) titles[sid] = epMap;
+          }
+        });
+      }
+    } catch (_) {}
+    _catchUpTitles = titles;
+
+    // Load catch-up last-modified timestamps.
+    final String lastModRaw = jsonEncode(
+      state[watchlistLastUpdatedStorageKey] ?? <String, dynamic>{},
+    );
+    final Map<String, DateTime> lastMod = <String, DateTime>{};
+    try {
+      final dynamic decodedLastMod = jsonDecode(lastModRaw);
+      if (decodedLastMod is Map<String, dynamic>) {
+        decodedLastMod.forEach((String sid, dynamic value) {
+          if (sid.isNotEmpty && value is String) {
+            final DateTime? parsed = DateTime.tryParse(value);
+            if (parsed != null) lastMod[sid] = parsed;
+          }
+        });
+      }
+    } catch (_) {}
+    _watchlistLastUpdated = lastMod;
   }
 
   Future<void> _saveProgressCorrections() async {
@@ -804,17 +910,32 @@ class _BangumiHomePageState extends State<BangumiHomePage>
 
     state[progressCorrectionStorageKey] = _legacyAbsoluteProgressCorrections;
     state[progressCorrectionDeltaStorageKey] = sanitizedDelta;
+    state[correctionBaseStorageKey] = _correctionBaseTheoretical;
+    state[catchUpProgressStorageKey] = _catchUpProgress;
+    state[catchUpTotalEpsStorageKey] = _catchUpTotalEps;
+    // Convert int-keyed map to string-keyed for JSON serialization.
+    state[catchUpTitlesStorageKey] = _catchUpTitles.map(
+      (String sid, Map<int, String> epMap) => MapEntry<String, dynamic>(
+        sid,
+        epMap.map((int ep, String title) => MapEntry<String, dynamic>(
+          ep.toString(), title,
+        )),
+      ),
+    );
+    state[watchlistLastUpdatedStorageKey] = _watchlistLastUpdated.map(
+      (String sid, DateTime dt) => MapEntry<String, dynamic>(
+        sid, dt.toIso8601String(),
+      ),
+    );
     await _appStateStore.writeState(state);
     _manualProgressCorrections = sanitizedDelta;
     _progressCorrectionMigrationDirty = false;
   }
 
-  
   int _resolveTheoreticalAiredEp(SubjectProgress progress) {
     return math.max(0, progress.latestAiredEp ?? progress.airedEps ?? 0);
   }
 
-  
   int _clampCorrectedEp(int value, int? totalEps) {
     if (totalEps == null) {
       return math.max(0, value);
@@ -842,10 +963,7 @@ class _BangumiHomePageState extends State<BangumiHomePage>
     _progressCorrectionMigrationDirty = true;
   }
 
-  SubjectProgress _applyCorrection(
-    SubjectProgress progress,
-    int corrected,
-  ) {
+  SubjectProgress _applyCorrection(SubjectProgress progress, int corrected) {
     final int? totalEps = progress.totalEpsDeclared ?? progress.totalEpsListed;
     final int clamped = _clampCorrectedEp(corrected, totalEps);
     final int? nextEp = totalEps != null && clamped < totalEps
@@ -881,6 +999,17 @@ class _BangumiHomePageState extends State<BangumiHomePage>
   ) {
     if (progress.error != null && progress.error!.isNotEmpty) {
       return progress;
+    }
+
+    // Auto-clear correction if the theoretical value has changed since the
+    // correction was saved (i.e. new episodes have aired).
+    final int? baseTheoretical = _correctionBaseTheoretical[subjectId];
+    if (baseTheoretical != null) {
+      final int currentTheoretical = _resolveTheoreticalAiredEp(progress);
+      if (currentTheoretical != baseTheoretical) {
+        _manualProgressCorrections.remove(subjectId);
+        _correctionBaseTheoretical.remove(subjectId);
+      }
     }
 
     final int? manualDelta = _manualProgressCorrections[subjectId];
@@ -950,7 +1079,8 @@ class _BangumiHomePageState extends State<BangumiHomePage>
       _settingCoverCacheConcurrency = result.coverCacheConcurrency;
       _settingApiUserAgent = result.apiUserAgent;
       _settingThemeMode = result.themeMode;
-      _settingAppBarBackgroundImageEnabled = result.appBarBackgroundImageEnabled;
+      _settingAppBarBackgroundImageEnabled =
+          result.appBarBackgroundImageEnabled;
       _settingAppBarBackgroundImagePath = result.appBarBackgroundImagePath;
       _settingTimezoneConversionEnabled = result.timezoneConversionEnabled;
       _settingTimezoneOffsetMinutes = result.timezoneOffsetMinutes;
@@ -966,13 +1096,18 @@ class _BangumiHomePageState extends State<BangumiHomePage>
     }
     if (proxyChanged) {
       _service.updateProxySettings(
-        _settingProxyEnabled, _settingProxyHost, _settingProxyPort, _settingProxyBypass,
+        _settingProxyEnabled,
+        _settingProxyHost,
+        _settingProxyPort,
+        _settingProxyBypass,
       );
     }
     if (result.proxySubscriptionUrl.isNotEmpty && subscriptionChanged) {
       try {
         await ClashManager.instance.stop();
-        await ClashManager.instance.applySubscription(result.proxySubscriptionUrl);
+        await ClashManager.instance.applySubscription(
+          result.proxySubscriptionUrl,
+        );
         await ClashManager.instance.start();
       } catch (_) {}
     }
@@ -1001,10 +1136,8 @@ class _BangumiHomePageState extends State<BangumiHomePage>
                 ? const Center(child: Text('暂无归档记录'))
                 : ListView.separated(
                     itemCount: entries.length,
-                    separatorBuilder: (
-                      BuildContext context,
-                      int index,
-                    ) => const Divider(height: 1),
+                    separatorBuilder: (BuildContext context, int index) =>
+                        const Divider(height: 1),
                     itemBuilder: (BuildContext context, int index) {
                       final WatchArchiveEntry entry =
                           entries[entries.length - 1 - index];
@@ -1067,8 +1200,8 @@ class _BangumiHomePageState extends State<BangumiHomePage>
     final String monthToken =
         '${now.year}-${now.month.toString().padLeft(2, '0')}';
     final Map<String, dynamic> state = await _appStateStore.readState();
-    final String savedMonth =
-        (state[calendarAutoRefreshMonthKey] ?? '').toString();
+    final String savedMonth = (state[calendarAutoRefreshMonthKey] ?? '')
+        .toString();
     return savedMonth != monthToken;
   }
 
@@ -1081,80 +1214,33 @@ class _BangumiHomePageState extends State<BangumiHomePage>
     await _appStateStore.writeState(state);
   }
 
-  
   String _currentQuarterLabel() {
     final DateTime now = DateTime.now();
     final int quarterStartMonth = ((now.month - 1) ~/ 3) * 3 + 1;
     return '${now.year}年$quarterStartMonth月';
   }
 
-  Future<void> _archiveMissingWatchlistItemsAfterCalendar(
-    List<DaySchedule> schedule,
-  ) async {
-    if (_watchlist.isEmpty) {
-      return;
-    }
-
-    final Set<String> currentCalendarIds = schedule
-        .expand((DaySchedule day) => day.items)
-        .map((SubjectItem item) => item.subjectId)
-        .where((String id) => id.isNotEmpty)
-        .toSet();
-
-    // Guard against accidental mass-removal if fetched schedule is unexpectedly empty.
-    if (currentCalendarIds.isEmpty) {
-      return;
-    }
-
-    final List<SubjectItem> toArchive = _watchlist
-        .where(
-          (SubjectItem item) =>
-              item.subjectId.isNotEmpty &&
-              !currentCalendarIds.contains(item.subjectId),
-        )
-        .toList();
-
-    if (toArchive.isEmpty) {
-      return;
-    }
-
-    final String quarter = _currentQuarterLabel();
-    final List<WatchArchiveEntry> entries = toArchive
-        .map(
-          (SubjectItem item) =>
-              WatchArchiveEntry.fromSubject(item, quarter: quarter),
-        )
-        .toList();
-    await _watchArchiveStore.appendEntries(entries);
-
-    final Set<String> removedIds = toArchive
-        .map((SubjectItem item) => item.subjectId)
-        .toSet();
-
-    if (!mounted) {
-      return;
-    }
-
-    setState(() {
-      _watchlist = _watchlist
-          .where((SubjectItem item) => !removedIds.contains(item.subjectId))
-          .toList();
-      _selectedIds.removeWhere((String id) => removedIds.contains(id));
-      _manualProgressCorrections.removeWhere(
-        (String id, int _) => removedIds.contains(id),
-      );
-      _legacyAbsoluteProgressCorrections.removeWhere(
-        (String id, int _) => removedIds.contains(id),
-      );
-      for (final String id in removedIds) {
-        _progressCache.remove(id);
-        _rawProgressCache.remove(id);
-      }
-    });
-
-    await _saveWatchlist();
-    await _saveProgressCorrections();
-    _showStatus('已归档并移除 ${toArchive.length} 部未出现在当前日历的关注番剧');
+  void _rebuildAllIndices() {
+    _allItemsIndex = <String, int>{
+      for (int i = 0; i < _allItems.length; i++)
+        if (_allItems[i].subjectId.isNotEmpty) _allItems[i].subjectId: i,
+    };
+    _todayItemsIndex = <String, int>{
+      for (int i = 0; i < _todayItems.length; i++)
+        if (_todayItems[i].subjectId.isNotEmpty) _todayItems[i].subjectId: i,
+    };
+    _watchlistIndex = <String, int>{
+      for (int i = 0; i < _watchlist.length; i++)
+        if (_watchlist[i].subjectId.isNotEmpty) _watchlist[i].subjectId: i,
+    };
+    _scheduleDataIndex = <String, Map<String, int>>{
+      for (int d = 0; d < _scheduleData.length; d++)
+        _scheduleData[d].weekday: <String, int>{
+          for (int j = 0; j < _scheduleData[d].items.length; j++)
+            if (_scheduleData[d].items[j].subjectId.isNotEmpty)
+              _scheduleData[d].items[j].subjectId: j,
+        },
+    };
   }
 
   void _applyScheduleData(
@@ -1223,6 +1309,7 @@ class _BangumiHomePageState extends State<BangumiHomePage>
       _selectedIds = validSelected;
 
       _isLoadingSchedule = false;
+      _rebuildAllIndices();
     });
 
     unawaited(_hydrateCachedCoversForWatchlistItems());
@@ -1256,11 +1343,17 @@ class _BangumiHomePageState extends State<BangumiHomePage>
       // 3. Build weekday indices.
       final Map<String, List<SubjectItem>> enriched =
           <String, List<SubjectItem>>{
-        for (final String wd in <String>[
-          '星期日', '星期一', '星期二', '星期三', '星期四', '星期五', '星期六',
-        ])
-          wd: <SubjectItem>[],
-      };
+            for (final String wd in <String>[
+              '星期日',
+              '星期一',
+              '星期二',
+              '星期三',
+              '星期四',
+              '星期五',
+              '星期六',
+            ])
+              wd: <SubjectItem>[],
+          };
       for (final DaySchedule day in schedule) {
         enriched[day.weekday]!.addAll(day.items);
       }
@@ -1292,9 +1385,10 @@ class _BangumiHomePageState extends State<BangumiHomePage>
 
       // 4. Filter to candidates whose begin date is within the last year,
       //    have a bangumi id, and aren't already in the schedule.
-      final DateTime oneYearAgo = DateTime.now().toUtc().add(
-        const Duration(hours: 9),
-      ).subtract(const Duration(days: 365));
+      final DateTime oneYearAgo = DateTime.now()
+          .toUtc()
+          .add(const Duration(hours: 9))
+          .subtract(const Duration(days: 365));
       final List<Map<String, dynamic>> candidates = <Map<String, dynamic>>[];
 
       for (final dynamic raw in itemsRaw) {
@@ -1304,18 +1398,7 @@ class _BangumiHomePageState extends State<BangumiHomePage>
         if (begin == null || begin.isBefore(oneYearAgo)) continue;
 
         // Extract bangumi id.
-        String bgmId = '';
-        final dynamic sites = raw['sites'];
-        if (sites is List) {
-          for (final dynamic site in sites) {
-            if (site is Map<String, dynamic> &&
-                rs(site['site']).toLowerCase() == 'bangumi') {
-              bgmId = rs(site['id']);
-              if (RegExp(r'^\d+$').hasMatch(bgmId)) break;
-              bgmId = '';
-            }
-          }
-        }
+        final String bgmId = _service.extractBangumiIdFromBgmListItem(raw);
         if (bgmId.isEmpty || existingIds.contains(bgmId)) continue;
         candidates.add(<String, dynamic>{
           'id': bgmId,
@@ -1331,21 +1414,25 @@ class _BangumiHomePageState extends State<BangumiHomePage>
       int nextIdx = 0;
       final List<Future<void>> workers = <Future<void>>[];
       for (int w = 0; w < maxConcurrency && w < candidates.length; w++) {
-        workers.add(Future<void>(() async {
-          while (true) {
-            final int idx;
-            idx = nextIdx;
-            nextIdx++;
-            if (idx >= candidates.length) return;
-            final String id = candidates[idx]['id'] as String;
-            try {
-              if (await _service.isSubjectStillAiring(id)) {
-                stillAiring.add(id);
-                _appendDebugLog('日历: OnAir 补充收录 $id (${candidates[idx]['title']})');
-              }
-            } catch (_) {}
-          }
-        }));
+        workers.add(
+          Future<void>(() async {
+            while (true) {
+              final int idx;
+              idx = nextIdx;
+              nextIdx++;
+              if (idx >= candidates.length) return;
+              final String id = candidates[idx]['id'] as String;
+              try {
+                if (await _service.isSubjectStillAiring(id)) {
+                  stillAiring.add(id);
+                  _appendDebugLog(
+                    '日历: OnAir 补充收录 $id (${candidates[idx]['title']})',
+                  );
+                }
+              } catch (_) {}
+            }
+          }),
+        );
       }
       await Future.wait(workers);
 
@@ -1353,18 +1440,7 @@ class _BangumiHomePageState extends State<BangumiHomePage>
       //    the onair JSON and add them to the schedule.
       for (final dynamic raw in itemsRaw) {
         if (raw is! Map<String, dynamic>) continue;
-        String bgmId = '';
-        final dynamic sites = raw['sites'];
-        if (sites is List) {
-          for (final dynamic site in sites) {
-            if (site is Map<String, dynamic> &&
-                rs(site['site']).toLowerCase() == 'bangumi') {
-              bgmId = rs(site['id']);
-              if (RegExp(r'^\d+$').hasMatch(bgmId)) break;
-              bgmId = '';
-            }
-          }
-        }
+        final String bgmId = _service.extractBangumiIdFromBgmListItem(raw);
         if (!stillAiring.contains(bgmId)) continue;
 
         // Broadcast time from the onair JSON.
@@ -1372,15 +1448,21 @@ class _BangumiHomePageState extends State<BangumiHomePage>
         String weekday = '';
         String updateTime = '';
         if (broadcast.isNotEmpty) {
-          final RegExpMatch? m = RegExp(r'^R/([^/]+)/P(\d+)D$').firstMatch(
-            broadcast,
-          );
+          final RegExpMatch? m = RegExp(
+            r'^R/([^/]+)/P(\d+)D$',
+          ).firstMatch(broadcast);
           if (m != null) {
             final DateTime? start = parseJst(m.group(1)!);
             if (start != null) {
               final int wd = start.weekday;
               const List<String> wds = <String>[
-                '星期一','星期二','星期三','星期四','星期五','星期六','星期日',
+                '星期一',
+                '星期二',
+                '星期三',
+                '星期四',
+                '星期五',
+                '星期六',
+                '星期日',
               ];
               weekday = wds[(wd + 6) % 7];
               updateTime =
@@ -1401,29 +1483,42 @@ class _BangumiHomePageState extends State<BangumiHomePage>
             final dynamic list = tt[key];
             if (list is List && list.isNotEmpty) {
               final String t = rs(list[0]);
-              if (t.isNotEmpty) { cnName = t; break; }
+              if (t.isNotEmpty) {
+                cnName = t;
+                break;
+              }
             }
           }
         }
-        enriched[weekday]!.add(SubjectItem(
-          subjectId: bgmId,
-          subjectUrl: 'https://bangumi.tv/subject/$bgmId',
-          nameCn: cnName,
-          nameOrigin: jpName,
-          coverUrl: '',
-          updateTime: updateTime,
-        ));
+        enriched[weekday]!.add(
+          SubjectItem(
+            subjectId: bgmId,
+            subjectUrl: 'https://bangumi.tv/subject/$bgmId',
+            nameCn: cnName,
+            nameOrigin: jpName,
+            coverUrl: '',
+            updateTime: updateTime,
+          ),
+        );
       }
 
       // 7. Rebuild schedule in weekday order.
       final List<DaySchedule> result = <DaySchedule>[];
       for (final String w in <String>[
-        '星期一','星期二','星期三','星期四','星期五','星期六','星期日',
+        '星期一',
+        '星期二',
+        '星期三',
+        '星期四',
+        '星期五',
+        '星期六',
+        '星期日',
       ]) {
         final List<SubjectItem> items = enriched[w]!;
         if (items.isEmpty) continue;
-        items.sort((SubjectItem a, SubjectItem b) =>
-            a.updateTime.compareTo(b.updateTime));
+        items.sort(
+          (SubjectItem a, SubjectItem b) =>
+              a.updateTime.compareTo(b.updateTime),
+        );
         result.add(DaySchedule(weekday: w, items: items));
       }
       _appendDebugLog('日历: OnAir 补充 ${stillAiring.length} 部半年番');
@@ -1448,9 +1543,9 @@ class _BangumiHomePageState extends State<BangumiHomePage>
       final bool needAutoNetwork = !forceNetwork && initial
           ? await _shouldAutoRefreshOnMonthFirst()
           : false;
-        final bool cacheTimezoneMatched = await _isCalendarCacheTimezoneMatched();
+      final bool cacheTimezoneMatched = await _isCalendarCacheTimezoneMatched();
 
-        if (!forceNetwork && !needAutoNetwork && cacheTimezoneMatched) {
+      if (!forceNetwork && !needAutoNetwork && cacheTimezoneMatched) {
         final List<DaySchedule> cachedSchedule = await _calendarCacheManager
             .load();
         if (cachedSchedule.isNotEmpty) {
@@ -1461,7 +1556,6 @@ class _BangumiHomePageState extends State<BangumiHomePage>
             cachedSchedule,
             doneStatusText: initial ? '已从本地缓存加载日历' : '日历已从本地缓存刷新',
           );
-          await _archiveMissingWatchlistItemsAfterCalendar(cachedSchedule);
           unawaited(_hydrateCachedCoversForTodayItems());
           unawaited(_hydrateCachedCoversForWatchlistItems());
           return;
@@ -1472,19 +1566,25 @@ class _BangumiHomePageState extends State<BangumiHomePage>
         _appendDebugLog('日历缓存时区不匹配，跳过缓存并重新抓取');
       }
 
-      final List<DaySchedule> mergedScheduleJst =
-          await _service.fetchCalendarSchedule();
-      final List<DaySchedule> enrichedJst =
-          await _enrichWithOnAirShows(mergedScheduleJst);
+      final List<DaySchedule> mergedScheduleJst = await _service
+          .fetchCalendarSchedule();
+      final List<DaySchedule> enrichedJst = await _enrichWithOnAirShows(
+        mergedScheduleJst,
+      );
       final int enrichedCount =
-          enrichedJst.fold<int>(0, (int sum, DaySchedule day) => sum + day.items.length) -
-          mergedScheduleJst.fold<int>(0, (int sum, DaySchedule day) => sum + day.items.length);
+          enrichedJst.fold<int>(
+            0,
+            (int sum, DaySchedule day) => sum + day.items.length,
+          ) -
+          mergedScheduleJst.fold<int>(
+            0,
+            (int sum, DaySchedule day) => sum + day.items.length,
+          );
       if (enrichedCount > 0) {
         _appendDebugLog('日历: OnAir 补充后共计 $enrichedCount 部');
       }
-      final List<DaySchedule> mergedSchedule = _convertScheduleFromJstForDisplay(
-        enrichedJst,
-      );
+      final List<DaySchedule> mergedSchedule =
+          _convertScheduleFromJstForDisplay(enrichedJst);
       await _calendarCacheManager.save(mergedSchedule);
       await _saveCalendarCacheTimezoneToken();
 
@@ -1502,7 +1602,6 @@ class _BangumiHomePageState extends State<BangumiHomePage>
             ? (initial ? '初始化完成' : '日历已刷新')
             : (initial ? '初始化完成（网络）' : '日历已刷新（网络）'),
       );
-      await _archiveMissingWatchlistItemsAfterCalendar(mergedSchedule);
 
       if (forceNetwork || needAutoNetwork) {
         unawaited(_cacheAllCalendarCovers(mergedSchedule));
@@ -1520,11 +1619,7 @@ class _BangumiHomePageState extends State<BangumiHomePage>
           if (!mounted) {
             return;
           }
-          _applyScheduleData(
-            cachedSchedule,
-            doneStatusText: '网络失败，已回退本地缓存日历',
-          );
-          await _archiveMissingWatchlistItemsAfterCalendar(cachedSchedule);
+          _applyScheduleData(cachedSchedule, doneStatusText: '网络失败，已回退本地缓存日历');
           unawaited(_hydrateCachedCoversForTodayItems());
           unawaited(_hydrateCachedCoversForWatchlistItems());
           return;
@@ -1545,7 +1640,6 @@ class _BangumiHomePageState extends State<BangumiHomePage>
     }
   }
 
-  
   List<SubjectItem> _resolveTodayItemsFromSchedule(List<DaySchedule> schedule) {
     return schedule
         .where((DaySchedule day) => day.weekday == _effectiveTodayWeekday)
@@ -1553,7 +1647,6 @@ class _BangumiHomePageState extends State<BangumiHomePage>
         .toList();
   }
 
-  
   Future<void> _openDebugToolsDialog() async {
     // Delegate to DebugTools widget.
     await DebugTools.showTools(
@@ -1569,6 +1662,7 @@ class _BangumiHomePageState extends State<BangumiHomePage>
         setState(() {
           _debugWeekdayOverride = weekday;
           _todayItems = _resolveTodayItemsFromSchedule(_scheduleData);
+          _rebuildAllIndices();
         });
         _showStatus(
           weekday == null ? '已切换为系统时间' : '已调试指定今日为 ${weekdayMap[weekday]}',
@@ -1589,10 +1683,16 @@ class _BangumiHomePageState extends State<BangumiHomePage>
           return;
         }
         final String quarter = _currentQuarterLabel();
-        unawaited(_watchArchiveStore.appendEntries(
-          targets.map((SubjectItem item) =>
-              WatchArchiveEntry.fromSubject(item, quarter: quarter)).toList(),
-        ));
+        unawaited(
+          _watchArchiveStore.appendEntries(
+            targets
+                .map(
+                  (SubjectItem item) =>
+                      WatchArchiveEntry.fromSubject(item, quarter: quarter),
+                )
+                .toList(),
+          ),
+        );
         _showStatus('调试归档完成：已加入 ${targets.length} 部番剧');
       },
       onToggleHoverHitArea: () {
@@ -1612,23 +1712,34 @@ class _BangumiHomePageState extends State<BangumiHomePage>
             return AlertDialog(
               title: const Text('调试日志窗口'),
               content: SizedBox(
-                width: 760, height: 460,
+                width: 760,
+                height: 460,
                 child: Container(
                   padding: const EdgeInsets.all(12),
                   decoration: BoxDecoration(
-                    color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                    color: Theme.of(
+                      context,
+                    ).colorScheme.surfaceContainerHighest,
                     borderRadius: BorderRadius.circular(8),
                   ),
                   child: SingleChildScrollView(
-                    child: SelectableText(logText,
-                      style: const TextStyle(fontFamily: 'Consolas', fontSize: 12, height: 1.4)),
+                    child: SelectableText(
+                      logText,
+                      style: const TextStyle(
+                        fontFamily: 'Consolas',
+                        fontSize: 12,
+                        height: 1.4,
+                      ),
+                    ),
                   ),
                 ),
               ),
               actions: <Widget>[
                 TextButton(
                   onPressed: () {
-                    setState(() { _debugLogs.clear(); });
+                    setState(() {
+                      _debugLogs.clear();
+                    });
                     _appendDebugLog('日志已手动清空');
                     Navigator.of(context).pop();
                   },
@@ -1671,12 +1782,22 @@ class _BangumiHomePageState extends State<BangumiHomePage>
                             child: Text(weekdayMap[i] ?? '星期$i'),
                           ),
                       ],
-                      onChanged: (int? value) { setLocalState(() { tempValue = value; }); },
+                      onChanged: (int? value) {
+                        setLocalState(() {
+                          tempValue = value;
+                        });
+                      },
                     ),
                   ),
                   actions: <Widget>[
-                    TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('取消')),
-                    FilledButton(onPressed: () => Navigator.of(context).pop(tempValue), child: const Text('应用')),
+                    TextButton(
+                      onPressed: () => Navigator.of(context).pop(),
+                      child: const Text('取消'),
+                    ),
+                    FilledButton(
+                      onPressed: () => Navigator.of(context).pop(tempValue),
+                      child: const Text('应用'),
+                    ),
                   ],
                 );
               },
@@ -1687,8 +1808,11 @@ class _BangumiHomePageState extends State<BangumiHomePage>
           setState(() {
             _debugWeekdayOverride = selected;
             _todayItems = _resolveTodayItemsFromSchedule(_scheduleData);
+            _rebuildAllIndices();
           });
-          _showStatus(selected == null ? '已切换为系统时间' : '已调试指定今日为 ${weekdayMap[selected]}');
+          _showStatus(
+            selected == null ? '已切换为系统时间' : '已调试指定今日为 ${weekdayMap[selected]}',
+          );
           unawaited(_hydrateCachedCoversForTodayItems());
         }
       },
@@ -1750,6 +1874,7 @@ class _BangumiHomePageState extends State<BangumiHomePage>
 
     setState(() {
       _todayItems = source;
+      _rebuildAllIndices();
     });
   }
 
@@ -1789,6 +1914,7 @@ class _BangumiHomePageState extends State<BangumiHomePage>
 
     setState(() {
       _watchlist = source;
+      _rebuildAllIndices();
     });
   }
 
@@ -1858,6 +1984,7 @@ class _BangumiHomePageState extends State<BangumiHomePage>
         }
         return item.copyWith(localCoverPath: localPath);
       }).toList();
+      _rebuildAllIndices();
     });
   }
 
@@ -1912,7 +2039,6 @@ class _BangumiHomePageState extends State<BangumiHomePage>
     final int maxParallelWorkers = _settingCoverCacheConcurrency;
     int nextIndex = 0;
 
-    
     int? takeNextIndex() {
       if (nextIndex >= updated.length) {
         return null;
@@ -1922,19 +2048,16 @@ class _BangumiHomePageState extends State<BangumiHomePage>
       return current;
     }
 
-    
     void applyRealtimeUpdate(SubjectItem fresh) {
       if (!mounted || fresh.subjectId.isEmpty) {
         return;
       }
 
       setState(() {
-        final int allIndex = _allItems.indexWhere(
-          (SubjectItem x) => x.subjectId == fresh.subjectId,
-        );
-        if (allIndex >= 0) {
-          final SubjectItem prev = _allItems[allIndex];
-          _allItems[allIndex] = prev.copyWith(
+        final int? allIdx = _allItemsIndex[fresh.subjectId];
+        if (allIdx != null) {
+          final SubjectItem prev = _allItems[allIdx];
+          _allItems[allIdx] = prev.copyWith(
             coverUrl: fresh.coverUrl.isNotEmpty
                 ? fresh.coverUrl
                 : prev.coverUrl,
@@ -1944,12 +2067,10 @@ class _BangumiHomePageState extends State<BangumiHomePage>
           );
         }
 
-        final int todayIndex = _todayItems.indexWhere(
-          (SubjectItem x) => x.subjectId == fresh.subjectId,
-        );
-        if (todayIndex >= 0) {
-          final SubjectItem prev = _todayItems[todayIndex];
-          _todayItems[todayIndex] = prev.copyWith(
+        final int? todayIdx = _todayItemsIndex[fresh.subjectId];
+        if (todayIdx != null) {
+          final SubjectItem prev = _todayItems[todayIdx];
+          _todayItems[todayIdx] = prev.copyWith(
             coverUrl: fresh.coverUrl.isNotEmpty
                 ? fresh.coverUrl
                 : prev.coverUrl,
@@ -1959,12 +2080,10 @@ class _BangumiHomePageState extends State<BangumiHomePage>
           );
         }
 
-        final int watchIndex = _watchlist.indexWhere(
-          (SubjectItem x) => x.subjectId == fresh.subjectId,
-        );
-        if (watchIndex >= 0) {
-          final SubjectItem prev = _watchlist[watchIndex];
-          _watchlist[watchIndex] = prev.copyWith(
+        final int? watchIdx = _watchlistIndex[fresh.subjectId];
+        if (watchIdx != null) {
+          final SubjectItem prev = _watchlist[watchIdx];
+          _watchlist[watchIdx] = prev.copyWith(
             coverUrl: fresh.coverUrl.isNotEmpty
                 ? fresh.coverUrl
                 : prev.coverUrl,
@@ -1977,25 +2096,28 @@ class _BangumiHomePageState extends State<BangumiHomePage>
           );
         }
 
-        _scheduleData = _scheduleData.map((DaySchedule day) {
-          final List<SubjectItem> nextItems = day.items.map((SubjectItem item) {
-            if (item.subjectId != fresh.subjectId) {
-              return item;
-            }
-            return item.copyWith(
+        for (int d = 0; d < _scheduleData.length; d++) {
+          final String wk = _scheduleData[d].weekday;
+          final int? idx = _scheduleDataIndex[wk]?[fresh.subjectId];
+          if (idx != null) {
+            final List<SubjectItem> items =
+                List<SubjectItem>.from(_scheduleData[d].items);
+            final SubjectItem prev = items[idx];
+            items[idx] = prev.copyWith(
               coverUrl: fresh.coverUrl.isNotEmpty
                   ? fresh.coverUrl
-                  : item.coverUrl,
+                  : prev.coverUrl,
               localCoverPath: fresh.localCoverPath.isNotEmpty
                   ? fresh.localCoverPath
-                  : item.localCoverPath,
+                  : prev.localCoverPath,
               updateTime: fresh.updateTime.isNotEmpty
                   ? fresh.updateTime
-                  : item.updateTime,
+                  : prev.updateTime,
             );
-          }).toList();
-          return DaySchedule(weekday: day.weekday, items: nextItems);
-        }).toList();
+            _scheduleData[d] = DaySchedule(weekday: wk, items: items);
+            break;
+          }
+        }
       });
     }
 
@@ -2050,9 +2172,6 @@ class _BangumiHomePageState extends State<BangumiHomePage>
 
       if (localPath == null) {
         try {
-          _appendDebugLog(
-            '网络: 开始抓取[缓存封面文件] $coverUrl (subjectId=${item.subjectId})',
-          );
           _appendDebugLog(
             '网络: 开始抓取[缓存封面文件] $coverUrl (subjectId=${item.subjectId})',
           );
@@ -2153,6 +2272,7 @@ class _BangumiHomePageState extends State<BangumiHomePage>
       _watchlist = _watchlist
           .map((SubjectItem item) => item.copyWith(localCoverPath: ''))
           .toList();
+      _rebuildAllIndices();
     });
     _showStatus('已清除封面缓存，共删除 $deleted 个文件');
 
@@ -2167,8 +2287,8 @@ class _BangumiHomePageState extends State<BangumiHomePage>
     }
 
     final Set<String>? allowedIds = onlySubjectIds
-      ?.where((String id) => id.isNotEmpty)
-      .toSet();
+        ?.where((String id) => id.isNotEmpty)
+        .toSet();
     final bool isScopedRefresh = allowedIds != null;
 
     bool apiAvailable = false;
@@ -2177,11 +2297,22 @@ class _BangumiHomePageState extends State<BangumiHomePage>
     }
 
     final Map<String, SubjectItem> watchTargets = <String, SubjectItem>{};
+    // Build a set of IDs that are in the current calendar.
+    final Set<String> calendarIds = <String>{};
+    for (final DaySchedule day in _scheduleData) {
+      for (final SubjectItem citem in day.items) {
+        if (citem.subjectId.isNotEmpty) calendarIds.add(citem.subjectId);
+      }
+    }
     for (final SubjectItem item in _watchlist) {
       if (item.subjectId.isEmpty) {
         continue;
       }
       if (allowedIds != null && !allowedIds.contains(item.subjectId)) {
+        continue;
+      }
+      // Skip items not in the current calendar (completed/补番) unless explicitly requested.
+      if (allowedIds == null && !calendarIds.contains(item.subjectId)) {
         continue;
       }
       watchTargets[item.subjectId] = item;
@@ -2238,7 +2369,6 @@ class _BangumiHomePageState extends State<BangumiHomePage>
           MapEntry<String, SubjectItem> a,
           MapEntry<String, SubjectItem> b,
         ) {
-          
           int rankFor(String id) {
             final bool isFollowed = watchTargets.containsKey(id);
             final bool isToday = todayIds.contains(id);
@@ -2300,7 +2430,6 @@ class _BangumiHomePageState extends State<BangumiHomePage>
     int processed = 0;
     int nextIndex = 0;
 
-    
     int? takeNextIndex() {
       if (nextIndex >= orderedTargets.length) {
         return null;
@@ -2325,7 +2454,8 @@ class _BangumiHomePageState extends State<BangumiHomePage>
             item.subjectUrl,
             scheduleTime: hint?.time ?? '',
             scheduleWeekday: hint?.weekday ?? '',
-            displayTimezoneOffsetMinutes: _effectiveDisplayTimezoneOffsetMinutes,
+            displayTimezoneOffsetMinutes:
+                _effectiveDisplayTimezoneOffsetMinutes,
           );
         } catch (e) {
           _appendDebugLog('网络: 抓取失败[进度] ${item.subjectUrl} ($e)');
@@ -2347,6 +2477,21 @@ class _BangumiHomePageState extends State<BangumiHomePage>
         _rawProgressCache[sid] = rawProgress;
         _progressCache[sid] = progress;
         _progressRefreshDone = processed;
+        // Update watchlist sort order timestamp when progress is refreshed.
+        if (watchTargets.containsKey(sid)) {
+          _watchlistLastUpdated[sid] = DateTime.now();
+        }
+        // Cache total episodes for catch-up items so they survive restart.
+        final int? totalEps = rawProgress.totalEpsDeclared ?? rawProgress.totalEpsListed;
+        if (totalEps != null && totalEps > 0) {
+          _catchUpTotalEps[sid] = totalEps;
+        }
+        // Cache episode titles for catch-up items so they survive restart.
+        if (rawProgress.episodeTitleByEp.isNotEmpty) {
+          _catchUpTitles[sid] = Map<int, String>.from(
+            rawProgress.episodeTitleByEp,
+          );
+        }
       });
     }
 
@@ -2386,7 +2531,6 @@ class _BangumiHomePageState extends State<BangumiHomePage>
     _showStatus('进度已更新');
   }
 
-  
   Future<void> _showSubjectDetail(SubjectItem item) async {
     if (item.subjectId.isEmpty) {
       _showStatus('条目 ID 为空');
@@ -2406,7 +2550,9 @@ class _BangumiHomePageState extends State<BangumiHomePage>
           item: item,
           service: _service,
           coverCacheManager: _coverCacheManager,
-          isFollowed: _watchlist.any((SubjectItem x) => x.subjectId == item.subjectId),
+          isFollowed: _watchlist.any(
+            (SubjectItem x) => x.subjectId == item.subjectId,
+          ),
           onOpenInBrowser: () => _openSubjectInBrowser(item),
           onToggleFollow: () => _toggleWatchFromToday(item),
         );
@@ -2437,7 +2583,6 @@ class _BangumiHomePageState extends State<BangumiHomePage>
     }
   }
 
-  
   Uri? _resolveSubjectUri(String raw) {
     final String value = raw.trim();
     if (value.isEmpty) {
@@ -2463,7 +2608,7 @@ class _BangumiHomePageState extends State<BangumiHomePage>
     final String url = uri.toString();
     try {
       if (Platform.isWindows) {
-        await Process.start('cmd', <String>['/c', 'start', '', url]);
+        await Process.start('cmd', <String>['/c', 'start', '', '"$url"']);
         return true;
       }
       if (Platform.isMacOS) {
@@ -2481,27 +2626,7 @@ class _BangumiHomePageState extends State<BangumiHomePage>
     return false;
   }
 
-  Widget _buildNetworkActivityIndicator() {
-    if (!_showNetworkIndicator) {
-      return const SizedBox.shrink();
-    }
 
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 8),
-      child: IgnorePointer(
-        child: SizedBox(
-          width: 18,
-          height: 18,
-          child: CircularProgressIndicator(
-            strokeWidth: 3,
-            color: Theme.of(context).colorScheme.onSurface,
-          ),
-        ),
-      ),
-    );
-  }
-
-  
   Widget _buildAppBarLogoLayer() {
     final double logoTop =
         -_appBarLogoHeight - _appBarLogoGapAboveTabBar + _appBarLogoOffsetY;
@@ -2534,7 +2659,6 @@ class _BangumiHomePageState extends State<BangumiHomePage>
     );
   }
 
-  
   PreferredSizeWidget _buildAppBarBottom() {
     return PreferredSize(
       preferredSize: const Size.fromHeight(kTextTabBarHeight),
@@ -2558,7 +2682,6 @@ class _BangumiHomePageState extends State<BangumiHomePage>
     );
   }
 
-  
   bool _shouldShowAppBarBackgroundImage() {
     if (!_settingAppBarBackgroundImageEnabled) {
       return false;
@@ -2566,7 +2689,6 @@ class _BangumiHomePageState extends State<BangumiHomePage>
     return _settingAppBarBackgroundImagePath.trim().isNotEmpty;
   }
 
-  
   String _normalizeBackgroundImageSource(String raw) {
     String value = raw.trim();
     if (value.startsWith('"') && value.endsWith('"') && value.length >= 2) {
@@ -2575,9 +2697,7 @@ class _BangumiHomePageState extends State<BangumiHomePage>
     return value;
   }
 
-  Widget _buildAppBarBackgroundImage({
-    required int? cacheWidth,
-  }) {
+  Widget _buildAppBarBackgroundImage({required int? cacheWidth}) {
     final String source = _normalizeBackgroundImageSource(
       _settingAppBarBackgroundImagePath,
     );
@@ -2585,7 +2705,6 @@ class _BangumiHomePageState extends State<BangumiHomePage>
         Theme.of(context).appBarTheme.backgroundColor ??
         Theme.of(context).colorScheme.surface;
 
-    
     Widget buildFallback() {
       return ColoredBox(color: fallbackColor);
     }
@@ -2599,15 +2718,11 @@ class _BangumiHomePageState extends State<BangumiHomePage>
       if (uri == null || !uri.hasScheme || !uri.hasAuthority) {
         return buildFallback();
       }
-      return Image.network(
-        source,
+      return AppBarRemoteImage(
+        uri: uri,
         fit: _appBarBackgroundImageFit,
-        alignment: Alignment.topCenter,
-        filterQuality: FilterQuality.low,
         cacheWidth: cacheWidth,
-        gaplessPlayback: true,
-        errorBuilder: (_, Object error, StackTrace? stackTrace) =>
-            buildFallback(),
+        fallback: (_) => buildFallback(),
       );
     }
 
@@ -2641,16 +2756,14 @@ class _BangumiHomePageState extends State<BangumiHomePage>
     );
   }
 
-  
   Widget _buildAppBarFlexibleBackground() {
     final bool isDark = Theme.of(context).brightness == Brightness.dark;
     final double overlayAlpha = isDark ? 0.28 : 0.12;
     return LayoutBuilder(
       builder: (BuildContext context, BoxConstraints constraints) {
-        final double dpr = MediaQuery.of(context).devicePixelRatio.clamp(
-          1.0,
-          3.0,
-        );
+        final double dpr = MediaQuery.of(
+          context,
+        ).devicePixelRatio.clamp(1.0, 3.0);
         final int? cacheWidth = constraints.maxWidth.isFinite
             ? math.max(1, (constraints.maxWidth * dpr).round())
             : null;
@@ -2658,19 +2771,14 @@ class _BangumiHomePageState extends State<BangumiHomePage>
         return Stack(
           fit: StackFit.expand,
           children: <Widget>[
-            _buildAppBarBackgroundImage(
-              cacheWidth: cacheWidth,
-            ),
-            ColoredBox(
-              color: Colors.black.withValues(alpha: overlayAlpha),
-            ),
+            _buildAppBarBackgroundImage(cacheWidth: cacheWidth),
+            ColoredBox(color: Colors.black.withValues(alpha: overlayAlpha)),
           ],
         );
       },
     );
   }
 
-  
   Future<void> _toggleWatchFromToday(SubjectItem item) async {
     final bool alreadyFollowed = _watchlist.any(
       (SubjectItem x) => x.subjectId == item.subjectId,
@@ -2683,9 +2791,15 @@ class _BangumiHomePageState extends State<BangumiHomePage>
             .toList();
         _selectedIds.remove(item.subjectId);
         _manualProgressCorrections.remove(item.subjectId);
+        _correctionBaseTheoretical.remove(item.subjectId);
         _legacyAbsoluteProgressCorrections.remove(item.subjectId);
         _progressCache.remove(item.subjectId);
         _rawProgressCache.remove(item.subjectId);
+        _catchUpProgress.remove(item.subjectId);
+        _catchUpTotalEps.remove(item.subjectId);
+        _catchUpTitles.remove(item.subjectId);
+        _watchlistLastUpdated.remove(item.subjectId);
+        _rebuildAllIndices();
       });
       await _saveWatchlist();
       await _saveProgressCorrections();
@@ -2696,10 +2810,70 @@ class _BangumiHomePageState extends State<BangumiHomePage>
     setState(() {
       _watchlist = <SubjectItem>[..._watchlist, item];
       _selectedIds.add(item.subjectId);
+      _rebuildAllIndices();
     });
     await _saveWatchlist();
     _showStatus('已关注：${item.displayName}');
     await _refreshProgress(onlySubjectIds: <String>{item.subjectId});
+    await _saveProgressCorrections();
+    // Hydrate cover immediately so it shows without waiting for calendar refresh.
+    unawaited(_hydrateCachedCoversForWatchlistItems());
+  }
+
+  Future<void> _archiveWatchlistItem(SubjectItem item) async {
+    if (item.subjectId.isEmpty) return;
+    final String quarter = _currentQuarterLabel();
+    await _watchArchiveStore.appendEntries(<WatchArchiveEntry>[
+      WatchArchiveEntry.fromSubject(item, quarter: quarter),
+    ]);
+    if (!mounted) return;
+    setState(() {
+      _watchlist = _watchlist
+          .where((SubjectItem x) => x.subjectId != item.subjectId)
+          .toList();
+      _selectedIds.remove(item.subjectId);
+      _manualProgressCorrections.remove(item.subjectId);
+      _legacyAbsoluteProgressCorrections.remove(item.subjectId);
+      _progressCache.remove(item.subjectId);
+      _rawProgressCache.remove(item.subjectId);
+      _catchUpProgress.remove(item.subjectId);
+      _catchUpTotalEps.remove(item.subjectId);
+      _catchUpTitles.remove(item.subjectId);
+      _watchlistLastUpdated.remove(item.subjectId);
+      _rebuildAllIndices();
+    });
+    await _saveWatchlist();
+    await _saveProgressCorrections();
+    _showStatus('已归档：${item.displayName}');
+  }
+
+  void _onCatchUpForward(String subjectId) {
+    final int totalEps = _progressCache[subjectId] != null
+        ? (_progressCache[subjectId]!.totalEpsDeclared ??
+            _progressCache[subjectId]!.totalEpsListed ??
+            9999)
+        : 9999;
+    setState(() {
+      final int current = _catchUpProgress[subjectId] ?? 0;
+      if (current < totalEps) {
+        _catchUpProgress[subjectId] = current + 1;
+        _watchlistLastUpdated[subjectId] = DateTime.now();
+      }
+    });
+    _saveProgressCorrections();
+  }
+
+  void _onCatchUpBack(String subjectId) {
+    setState(() {
+      final int current = _catchUpProgress[subjectId] ?? 0;
+      if (current <= 1) {
+        _catchUpProgress.remove(subjectId);
+      } else {
+        _catchUpProgress[subjectId] = current - 1;
+      }
+      _watchlistLastUpdated[subjectId] = DateTime.now();
+    });
+    _saveProgressCorrections();
   }
 
   Future<void> _openProgressAdjustDialog(SubjectItem item) async {
@@ -2714,23 +2888,16 @@ class _BangumiHomePageState extends State<BangumiHomePage>
     final SubjectProgress baseProgress = rawCurrent ?? current;
     final int totalEps =
         (baseProgress.totalEpsDeclared ?? baseProgress.totalEpsListed ?? 9999)
-            .clamp(
-          0,
-          9999,
-        );
-    final int theoreticalEp = _resolveTheoreticalAiredEp(baseProgress).clamp(
-      0,
-      totalEps,
-    );
-    final int manualDelta = _manualProgressCorrections[subjectId] ??
+            .clamp(0, 9999);
+    final int theoreticalEp = _resolveTheoreticalAiredEp(
+      baseProgress,
+    ).clamp(0, totalEps);
+    final int manualDelta =
+        _manualProgressCorrections[subjectId] ??
         ((_legacyAbsoluteProgressCorrections[subjectId] ?? theoreticalEp) -
             theoreticalEp);
-    int tempEp = (theoreticalEp + manualDelta).clamp(
-      0,
-      totalEps,
-    );
+    int tempEp = (theoreticalEp + manualDelta).clamp(0, totalEps);
 
-    
     String signedDeltaText(int value) {
       if (value > 0) {
         return '+$value';
@@ -2832,18 +2999,21 @@ class _BangumiHomePageState extends State<BangumiHomePage>
         final int delta = tempEp - theoreticalEp;
         if (delta == 0) {
           _manualProgressCorrections.remove(subjectId);
+          _correctionBaseTheoretical.remove(subjectId);
           _legacyAbsoluteProgressCorrections.remove(subjectId);
         } else {
           _manualProgressCorrections[subjectId] = delta;
+          _correctionBaseTheoretical[subjectId] = theoreticalEp;
           _legacyAbsoluteProgressCorrections.remove(subjectId);
         }
       } else {
         _manualProgressCorrections.remove(subjectId);
+        _correctionBaseTheoretical.remove(subjectId);
         _legacyAbsoluteProgressCorrections.remove(subjectId);
       }
 
-      final SubjectProgress? latest = _rawProgressCache[subjectId] ??
-          _progressCache[subjectId];
+      final SubjectProgress? latest =
+          _rawProgressCache[subjectId] ?? _progressCache[subjectId];
       if (latest != null) {
         _progressCache[subjectId] = _applyManualProgressCorrection(
           subjectId,
@@ -2856,26 +3026,39 @@ class _BangumiHomePageState extends State<BangumiHomePage>
     _showStatus(confirmed ? '已保存进度修正' : '已清除进度修正');
   }
 
-  
   @override
   /// 构建当前组件的界面结构。
   Widget build(BuildContext context) {
-    final bool useCustomAppBarBackground =
-      _shouldShowAppBarBackgroundImage();
+    final bool useCustomAppBarBackground = _shouldShowAppBarBackgroundImage();
 
     return DefaultTabController(
       length: 4,
       child: Scaffold(
         appBar: AppBar(
           clipBehavior: Clip.hardEdge,
-          backgroundColor: useCustomAppBarBackground ? Colors.transparent : null,
-          surfaceTintColor: useCustomAppBarBackground ? Colors.transparent : null,
-          flexibleSpace:
-              useCustomAppBarBackground ? _buildAppBarFlexibleBackground() : null,
+          backgroundColor: useCustomAppBarBackground
+              ? Colors.transparent
+              : null,
+          surfaceTintColor: useCustomAppBarBackground
+              ? Colors.transparent
+              : null,
+          flexibleSpace: useCustomAppBarBackground
+              ? _buildAppBarFlexibleBackground()
+              : null,
           title: const SizedBox.shrink(),
           bottom: _buildAppBarBottom(),
           actions: <Widget>[
-            _buildNetworkActivityIndicator(),
+            ProgressOverlay(
+              compact: true,
+              showStatusText: _showStatusText,
+              statusText: _statusText,
+              isCachingCalendarCovers: _isCachingCalendarCovers,
+              calendarCoverCacheDone: _calendarCoverCacheDone,
+              calendarCoverCacheTotal: _calendarCoverCacheTotal,
+              isLoadingProgress: _isLoadingProgress,
+              progressRefreshDone: _progressRefreshDone,
+              progressRefreshTotal: _progressRefreshTotal,
+            ),
             IconButton(
               tooltip: '调试工具',
               onPressed: _openDebugToolsDialog,
@@ -2906,50 +3089,72 @@ class _BangumiHomePageState extends State<BangumiHomePage>
                         isLoadingSchedule: _isLoadingSchedule,
                         scheduleError: _scheduleError,
                         todayItems: _todayItems,
-                        watchIds: _watchlist.map((SubjectItem e) => e.subjectId).toSet(),
+                        watchIds: _watchlist
+                            .map((SubjectItem e) => e.subjectId)
+                            .toSet(),
                         progressCache: _progressCache,
                         effectiveTodayWeekday: _effectiveTodayWeekday,
                         timezoneLabel: _currentTimezoneFullLabel,
-                        onShowDetail: (SubjectItem item) => _showSubjectDetail(item),
-                        onToggleFollow: (SubjectItem item) => _toggleWatchFromToday(item),
+                        onShowDetail: (SubjectItem item) =>
+                            _showSubjectDetail(item),
+                        onToggleFollow: (SubjectItem item) =>
+                            _toggleWatchFromToday(item),
                       ),
                       WatchTab(
                         watchlist: _watchlist,
                         scheduleData: _scheduleData,
                         progressCache: _progressCache,
                         timezoneLabel: _currentTimezoneFullLabel,
-                        onShowDetail: (SubjectItem item) => _showSubjectDetail(item),
-                        onAdjustProgress: (SubjectItem item) => _openProgressAdjustDialog(item),
+                        calendarIds: _allItems.map((SubjectItem e) => e.subjectId).toSet(),
+                        catchUpProgress: _catchUpProgress,
+                        catchUpTotalEps: _catchUpTotalEps,
+                        catchUpTitles: _catchUpTitles,
+                        watchlistLastUpdated: _watchlistLastUpdated,
+                        onShowDetail: (SubjectItem item) =>
+                            _showSubjectDetail(item),
+                        onToggleFollow: (SubjectItem item) =>
+                            _toggleWatchFromToday(item),
+                        onAdjustProgress: (SubjectItem item) =>
+                            _openProgressAdjustDialog(item),
+                        onArchive: (SubjectItem item) =>
+                            _archiveWatchlistItem(item),
+                        onCatchUpForward: (String id) => _onCatchUpForward(id),
+                        onCatchUpBack: (String id) => _onCatchUpBack(id),
                       ),
                       WeekCalendarTab(
                         scheduleData: _scheduleData,
-                        watchIds: _watchlist.map((SubjectItem e) => e.subjectId).where((String id) => id.isNotEmpty).toSet(),
-                        watchById: <String, SubjectItem>{ for (final SubjectItem item in _watchlist) if (item.subjectId.isNotEmpty) item.subjectId: item, },
+                        watchIds: _watchlist
+                            .map((SubjectItem e) => e.subjectId)
+                            .where((String id) => id.isNotEmpty)
+                            .toSet(),
+                        watchById: <String, SubjectItem>{
+                          for (final SubjectItem item in _watchlist)
+                            if (item.subjectId.isNotEmpty) item.subjectId: item,
+                        },
                         showAll: _weekCalendarShowAll,
                         timezoneLabel: _currentTimezoneFullLabel,
-                        onShowDetail: (SubjectItem item) => _showSubjectDetail(item),
-                        onToggleFollow: (SubjectItem item) => _toggleWatchFromToday(item),
-                        onShowAllChanged: (bool v) => setState(() { _weekCalendarShowAll = v; }),
+                        onShowDetail: (SubjectItem item) =>
+                            _showSubjectDetail(item),
+                        onToggleFollow: (SubjectItem item) =>
+                            _toggleWatchFromToday(item),
+                        onShowAllChanged: (bool v) => setState(() {
+                          _weekCalendarShowAll = v;
+                        }),
                       ),
                       SearchTab(
                         service: _service,
                         coverCacheManager: _coverCacheManager,
-                        watchIds: _watchlist.map((SubjectItem e) => e.subjectId).where((String id) => id.isNotEmpty).toSet(),
+                        watchIds: _watchlist
+                            .map((SubjectItem e) => e.subjectId)
+                            .where((String id) => id.isNotEmpty)
+                            .toSet(),
                         coverCacheConcurrency: _settingCoverCacheConcurrency,
-                        onShowDetail: (SubjectItem item) => _showSubjectDetail(item),
-                        onToggleFollow: (SubjectItem item) => _toggleWatchFromToday(item),
+                        onShowDetail: (SubjectItem item) =>
+                            _showSubjectDetail(item),
+                        onToggleFollow: (SubjectItem item) =>
+                            _toggleWatchFromToday(item),
                       ),
                     ],
-                  ),
-                  ProgressOverlay(
-                    showStatusText: _showStatusText,
-                    statusText: _statusText,
-                    isCachingCalendarCovers: _isCachingCalendarCovers,
-                    calendarCoverCacheDone: _calendarCoverCacheDone,
-                    calendarCoverCacheTotal: _calendarCoverCacheTotal,
-                    isLoadingProgress: _isLoadingProgress,
-                    progressRefreshDone: _progressRefreshDone,
-                    progressRefreshTotal: _progressRefreshTotal,
                   ),
                 ],
               ),
@@ -2971,11 +3176,3 @@ class _BangumiHomePageState extends State<BangumiHomePage>
     );
   }
 }
-
-/// 柱状图渲染器 — 用于评分分布等场景。
-
-
-/// 条目详情底部弹窗内容。
-
-
-
