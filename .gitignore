@@ -63,6 +63,9 @@ app.*.map.json
 # Claude Code config
 /.claude/
 
+# Clash core binary (too large for GitHub API pushes; add manually)
+/assets/mihomo.exe
+
 # IDE settings
 /.vscode/
 
