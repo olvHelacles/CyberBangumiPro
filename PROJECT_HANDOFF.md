@@ -279,6 +279,7 @@ app_settings_v1 字段（完整）:
 - **准时追番检测**：新增 _periodicCheckTimer（每 120 秒），扫描番表放送时刻，在放送后 +2~15 分钟内自动刷新进度、将有新集的番提到顶部。
 - **日历缓存格式升级**：calendar_cache.json 支持新版封装格式（含 startDates），加载时恢复开播日期以过滤未开播条目不出现在今日更新中。旧版平铺格式向下兼容。
 - **AppBar 远程背景图超时**：新增 AppBarRemoteImage widget，直连 + 8s 超时。
+- **调试模拟番剧**：支持创建配置可调的测试番剧（放送星期/时刻、首集日期、总集数、间隔），通过 BangumiService 注册后走完整的 API 请求流程（fake JSON 响应），用于测试追番排序、定时检测等功能。
 
 ## 9. 后续改动清单
 
@@ -291,6 +292,7 @@ app_settings_v1 字段（完整）:
 7. 修改 _allItems/_todayItems/_watchlist/_scheduleData 时别忘了同步 _rebuildAllIndices()。
 8. 修改日历缓存格式时注意向后兼容（CalendarCacheManager.load 支持新旧两种格式）。
 9. 定时检测（_periodicCheckTimer）依赖番表放送时刻，番表无 updateTime 的条目不会自动触发检测。
+10. 创建/删除模拟番剧时须同步调用 _service.registerSimulatedAnime / unregisterSimulatedAnime。
 
 ## 10. 新会话接力模板
 

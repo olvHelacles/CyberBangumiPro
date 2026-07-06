@@ -12,6 +12,7 @@ import 'package:window_manager/window_manager.dart';
 import 'clash_manager.dart';
 import 'constants.dart';
 import 'models/broadcast_types.dart';
+import 'models/simulated_anime.dart';
 import 'models/subject_item.dart';
 import 'models/subject_progress.dart';
 import 'models/watch_archive_entry.dart';
@@ -19,6 +20,7 @@ import 'services/bangumi_service.dart';
 import 'stores/app_state_store.dart';
 import 'stores/calendar_cache_manager.dart';
 import 'stores/cover_cache_manager.dart';
+import 'stores/simulated_anime_store.dart';
 import 'stores/watch_archive_store.dart';
 import 'widgets/progress_overlay.dart';
 import 'widgets/subject_detail_sheet.dart';
@@ -293,6 +295,7 @@ class _BangumiHomePageState extends State<BangumiHomePage>
   final CalendarCacheManager _calendarCacheManager = CalendarCacheManager();
   final AppStateStore _appStateStore = AppStateStore();
   final WatchArchiveStore _watchArchiveStore = WatchArchiveStore();
+  final SimulatedAnimeStore _simulatedAnimeStore = SimulatedAnimeStore();
   final TextEditingController _searchController = TextEditingController();
 
   bool _isLoadingSchedule = true;
@@ -354,6 +357,7 @@ class _BangumiHomePageState extends State<BangumiHomePage>
   Timer? _periodicCheckTimer;
   Map<String, Map<int, String>> _catchUpTitles = <String, Map<int, String>>{};
   Set<String> _selectedIds = <String>{};
+  List<SimulatedAnime> _simulatedAnimes = <SimulatedAnime>[];
   int? _debugWeekdayOverride;
 
   String get _systemWeekday {
@@ -536,6 +540,7 @@ class _BangumiHomePageState extends State<BangumiHomePage>
     }
 
     await _loadWatchlist();
+    await _loadSimulatedAnimes();
     await _refreshCalendarSchedule(initial: true);
 
     if (cacheDirMissingAtStartup && _scheduleData.isNotEmpty) {
@@ -1227,6 +1232,28 @@ class _BangumiHomePageState extends State<BangumiHomePage>
     await _appStateStore.writeState(state);
   }
 
+  Future<void> _loadSimulatedAnimes() async {
+    _simulatedAnimes = await _simulatedAnimeStore.load();
+    // Add simulated animes to watchlist and selected IDs automatically.
+    for (final SimulatedAnime sa in _simulatedAnimes) {
+      if (!_selectedIds.contains(sa.subjectId)) {
+        _watchlist.add(SubjectItem(
+          subjectId: sa.subjectId,
+          subjectUrl: sa.subjectId,
+          nameCn: sa.title,
+          nameOrigin: '',
+          coverUrl: '',
+          updateTime: sa.broadcastTimeJst,
+        ));
+        _selectedIds.add(sa.subjectId);
+      }
+      // Ensure every simulated anime has a baseline (0 = no episodes yet).
+      _watchlistLastAiredEp.putIfAbsent(sa.subjectId, () => 0);
+      // Register with the service so API calls get fake responses.
+      _service.registerSimulatedAnime(sa);
+    }
+  }
+
   Future<bool> _shouldAutoRefreshOnMonthFirst() async {
     final DateTime now = DateTime.now();
     if (now.day != 1) {
@@ -1283,6 +1310,49 @@ class _BangumiHomePageState extends State<BangumiHomePage>
     List<DaySchedule> schedule, {
     required String doneStatusText,
   }) {
+    // Inject debug simulated animes into schedule before processing.
+    if (_simulatedAnimes.isNotEmpty) {
+      for (final SimulatedAnime sa in _simulatedAnimes) {
+        bool found = false;
+        for (int d = 0; d < schedule.length; d++) {
+          if (schedule[d].weekday == sa.weekdayJst) {
+            final List<SubjectItem> items = List<SubjectItem>.from(
+              schedule[d].items,
+            );
+            items.add(SubjectItem(
+              subjectId: sa.subjectId,
+              subjectUrl: sa.subjectId,
+              nameCn: sa.title,
+              nameOrigin: '',
+              coverUrl: '',
+              updateTime: sa.broadcastTimeJst,
+            ));
+            schedule[d] = DaySchedule(
+              weekday: schedule[d].weekday,
+              items: items,
+            );
+            found = true;
+            break;
+          }
+        }
+        if (!found) {
+          schedule.add(DaySchedule(
+            weekday: sa.weekdayJst,
+            items: <SubjectItem>[
+              SubjectItem(
+                subjectId: sa.subjectId,
+                subjectUrl: sa.subjectId,
+                nameCn: sa.title,
+                nameOrigin: '',
+                coverUrl: '',
+                updateTime: sa.broadcastTimeJst,
+              ),
+            ],
+          ));
+        }
+      }
+    }
+
     final Map<String, SubjectItem> merged = <String, SubjectItem>{};
     for (final DaySchedule day in schedule) {
       for (final SubjectItem item in day.items) {
@@ -1865,7 +1935,39 @@ class _BangumiHomePageState extends State<BangumiHomePage>
           unawaited(_hydrateCachedCoversForTodayItems());
         }
       },
+      onCreateSimulatedAnime: () => _onCreateSimulatedAnime(),
     );
+  }
+
+  Future<void> _onCreateSimulatedAnime() async {
+    final SimulatedAnime? sa = await DebugTools.showSimulatedAnimeCreator(
+      context,
+    );
+    if (sa == null || !mounted) return;
+
+    setState(() {
+      _simulatedAnimes.add(sa);
+      _watchlist.add(SubjectItem(
+        subjectId: sa.subjectId,
+        subjectUrl: sa.subjectId,
+        nameCn: sa.title,
+        nameOrigin: '',
+        coverUrl: '',
+        updateTime: sa.broadcastTimeJst,
+      ));
+      _selectedIds.add(sa.subjectId);
+      _watchlistLastAiredEp[sa.subjectId] = 0;
+    });
+    _service.registerSimulatedAnime(sa);
+    await _simulatedAnimeStore.save(_simulatedAnimes);
+    await _saveWatchlist();
+    // Refresh schedule to include the new simulated anime.
+    _applyScheduleData(
+      List<DaySchedule>.from(_scheduleData),
+      doneStatusText: '已创建模拟番剧',
+    );
+    _appendDebugLog('调试: 已创建模拟番剧 ${sa.subjectId} (${sa.title})');
+    unawaited(_refreshProgress(onlySubjectIds: <String>{sa.subjectId}));
   }
 
   Future<void> _hydrateCachedCoversForTodayItems({
@@ -2646,33 +2748,35 @@ class _BangumiHomePageState extends State<BangumiHomePage>
         if (item.subjectId.isEmpty || item.updateTime.isEmpty) continue;
         if (!_selectedIds.contains(item.subjectId)) continue;
 
-        final ConvertedWeekdayTime? ct =
-            BroadcastTimeConverter.convertWeekdayAndTime(
-          weekday: day.weekday,
-          time: item.updateTime,
-          fromOffsetMinutes: BroadcastTimeConverter.jstOffsetMinutes,
-          toOffsetMinutes: displayOffset,
-        );
-        if (ct == null) continue;
+        if (item.subjectId.startsWith('debug_')) {
+          // Simulated anime: updateTime is in local timezone, no conversion.
+          _checkBroadcastInLocalTime(
+            item,
+            day,
+            now,
+            toCheck,
+          );
+        } else {
+          // Real shows: updateTime is in JST, convert to display timezone.
+          final ConvertedWeekdayTime? ct =
+              BroadcastTimeConverter.convertWeekdayAndTime(
+            weekday: day.weekday,
+            time: item.updateTime,
+            fromOffsetMinutes: BroadcastTimeConverter.jstOffsetMinutes,
+            toOffsetMinutes: displayOffset,
+          );
+          if (ct == null) continue;
 
-        final int? wi = BroadcastTimeConverter.weekdayToIndex(ct.weekday);
-        final int? minutes =
-            BroadcastTimeConverter.parseClockMinutes(ct.time);
-        if (wi == null || minutes == null) continue;
+          final int? wi = BroadcastTimeConverter.weekdayToIndex(ct.weekday);
+          final int? minutes =
+              BroadcastTimeConverter.parseClockMinutes(ct.time);
+          if (wi == null || minutes == null) continue;
 
-        DateTime broadcast = DateTime(
-          now.year, now.month, now.day,
-          minutes ~/ 60, minutes % 60,
-        );
-        final int diff = wi - now.weekday;
-        if (diff != 0) {
-          broadcast = broadcast.add(Duration(days: diff));
-        }
-        if (broadcast.isAfter(now)) continue;
-
-        final int elapsed = now.difference(broadcast).inMinutes;
-        if (elapsed >= 2 && elapsed <= 15) {
-          toCheck.add(item.subjectId);
+          DateTime broadcast = DateTime(
+            now.year, now.month, now.day,
+            minutes ~/ 60, minutes % 60,
+          );
+          _checkBroadcastWindow(broadcast, wi, now, item.subjectId, toCheck);
         }
       }
     }
@@ -2680,6 +2784,46 @@ class _BangumiHomePageState extends State<BangumiHomePage>
     if (toCheck.isNotEmpty) {
       _refreshProgress(onlySubjectIds: toCheck);
     }
+  }
+
+  /// Check if a real show's converted broadcast time falls in the
+  /// "just aired" window (+2 to +15 minutes).
+  void _checkBroadcastWindow(
+    DateTime broadcast,
+    int weekdayIndex,
+    DateTime now,
+    String subjectId,
+    Set<String> toCheck,
+  ) {
+    final int diff = weekdayIndex - now.weekday;
+    if (diff != 0) {
+      broadcast = broadcast.add(Duration(days: diff));
+    }
+    if (broadcast.isAfter(now)) return;
+
+    final int elapsed = now.difference(broadcast).inMinutes;
+    if (elapsed >= 2 && elapsed <= 15) {
+      toCheck.add(subjectId);
+    }
+  }
+
+  /// For simulated animes (local timezone), parse updateTime directly.
+  void _checkBroadcastInLocalTime(
+    SubjectItem item,
+    DaySchedule day,
+    DateTime now,
+    Set<String> toCheck,
+  ) {
+    final int? wi = BroadcastTimeConverter.weekdayToIndex(day.weekday);
+    final int? minutes =
+        BroadcastTimeConverter.parseClockMinutes(item.updateTime);
+    if (wi == null || minutes == null) return;
+
+    DateTime broadcast = DateTime(
+      now.year, now.month, now.day,
+      minutes ~/ 60, minutes % 60,
+    );
+    _checkBroadcastWindow(broadcast, wi, now, item.subjectId, toCheck);
   }
 
   Future<void> _showSubjectDetail(SubjectItem item) async {
@@ -2956,6 +3100,13 @@ class _BangumiHomePageState extends State<BangumiHomePage>
       await _saveWatchlist();
       await _saveProgressCorrections();
       _showStatus('已取消关注：${item.displayName}');
+      // Debug simulated animes are deleted on unfollow.
+      if (item.subjectId.startsWith('debug_')) {
+        _simulatedAnimes.removeWhere((a) => a.subjectId == item.subjectId);
+        _service.unregisterSimulatedAnime(item.subjectId);
+        await _simulatedAnimeStore.save(_simulatedAnimes);
+        _appendDebugLog('调试: 已删除模拟番剧 ${item.subjectId}');
+      }
       return;
     }
 

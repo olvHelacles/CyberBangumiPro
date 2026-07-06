@@ -11,6 +11,7 @@ import 'package:http/io_client.dart';
 
 import '../constants.dart';
 import '../models/broadcast_types.dart';
+import '../models/simulated_anime.dart';
 import '../models/subject_item.dart';
 import '../models/subject_progress.dart';
 
@@ -78,6 +79,19 @@ class BangumiService {
   String _proxyHost;
   int _proxyPort;
   List<String> _proxyBypassList;
+
+  // Debug simulated anime registry.
+  final Map<String, SimulatedAnime> _simulatedAnimes = <String, SimulatedAnime>{};
+
+  /// Register a simulated anime so its data is served from local generation
+  /// instead of calling the real Bangumi API.
+  void registerSimulatedAnime(SimulatedAnime anime) {
+    _simulatedAnimes[anime.subjectId] = anime;
+  }
+
+  void unregisterSimulatedAnime(String subjectId) {
+    _simulatedAnimes.remove(subjectId);
+  }
 
   ValueNotifier<int> get activeRequests => _activeRequests;
 
@@ -674,6 +688,7 @@ Future<String> _getWithRetry(
     final String trimmed = input.trim();
     if (trimmed.isEmpty) return '';
     if (RegExp(r'^\d+$').hasMatch(trimmed)) return trimmed;
+    if (trimmed.startsWith('debug_')) return trimmed;
     final RegExp pathPattern = RegExp(r'/subject/(\d+)');
     final RegExpMatch? pathMatch = pathPattern.firstMatch(trimmed);
     if (pathMatch != null) return pathMatch.group(1) ?? '';
@@ -722,6 +737,10 @@ Future<String> _getWithRetry(
 
   Future<Map<String, dynamic>?> _fetchSubjectFromApi(String subjectId) async {
     if (subjectId.isEmpty) return null;
+    // Simulated anime: return fake subject JSON.
+    if (subjectId.startsWith('debug_') && _simulatedAnimes.containsKey(subjectId)) {
+      return _buildSimulatedSubjectJson(_simulatedAnimes[subjectId]!);
+    }
     final String body = await _getWithRetry(
       '$bangumiApiBaseUrl/v0/subjects/$subjectId',
       purpose: '抓取 Bangumi API 条目信息',
@@ -739,6 +758,14 @@ Future<String> _getWithRetry(
     return _fetchSubjectFromApi(subjectId);
   }
 
+  Map<String, dynamic> _buildSimulatedSubjectJson(SimulatedAnime anime) {
+    return anime.toSubjectJson();
+  }
+
+  List<Map<String, dynamic>> _buildSimulatedEpisodeList(SimulatedAnime anime) {
+    return anime.toEpisodeListJson();
+  }
+
   Future<int?> fetchSubjectTotalEpisodes(String subjectId) async {
     final Map<String, dynamic>? subject = await _fetchSubjectFromApi(subjectId);
     if (subject == null || subject.isEmpty) return null;
@@ -749,6 +776,10 @@ Future<String> _getWithRetry(
 
   Future<List<Map<String, dynamic>>> _fetchMainEpisodesFromApi(String subjectId) async {
     if (subjectId.isEmpty) return <Map<String, dynamic>>[];
+    // Simulated anime: return fake episode list.
+    if (subjectId.startsWith('debug_') && _simulatedAnimes.containsKey(subjectId)) {
+      return _buildSimulatedEpisodeList(_simulatedAnimes[subjectId]!);
+    }
     final String body = await _getWithRetry(
       '$bangumiApiBaseUrl/v0/episodes?subject_id=$subjectId&type=0&limit=200&offset=0',
       purpose: '抓取 Bangumi API 分集列表',

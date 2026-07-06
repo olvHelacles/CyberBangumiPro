@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../constants.dart';
+import '../models/simulated_anime.dart';
 import '../models/subject_item.dart';
 import '../models/watch_archive_entry.dart';
 import '../stores/watch_archive_store.dart';
@@ -25,6 +26,7 @@ class DebugTools {
     required void Function(String) appendDebugLog,
     required Future<void> Function() openLogDialog,
     required Future<void> Function() openWeekdayDialog,
+    VoidCallback? onCreateSimulatedAnime,
   }) async {
     final String? action = await showModalBottomSheet<String>(
       context: context,
@@ -65,6 +67,14 @@ class DebugTools {
                 onTap: () =>
                     Navigator.of(context).pop('archive-current-watch'),
               ),
+              if (onCreateSimulatedAnime != null)
+                ListTile(
+                  leading: const Icon(Icons.science_outlined),
+                  title: const Text('调试：创建模拟番剧'),
+                  subtitle: const Text('创建可控的测试番剧用于调试追番排序'),
+                  onTap: () =>
+                      Navigator.of(context).pop('create-simulated-anime'),
+                ),
             ],
           ),
         );
@@ -94,6 +104,8 @@ class DebugTools {
               ? '已关闭悬停判定区域可视化'
               : '已开启悬停判定区域可视化',
         );
+      case 'create-simulated-anime':
+        onCreateSimulatedAnime?.call();
     }
   }
 
@@ -238,5 +250,158 @@ class DebugTools {
     );
 
     return selected;
+  }
+
+  /// Shows a dialog for creating a new SimulatedAnime for debugging.
+  /// Returns the created SimulatedAnime, or null if cancelled.
+  static Future<SimulatedAnime?> showSimulatedAnimeCreator(
+    BuildContext context,
+  ) async {
+    String title = '【调试】测试番剧';
+    String weekday = '星期一';
+    final TextEditingController timeCtrl = TextEditingController(text: '22:30');
+    final TextEditingController totalCtrl = TextEditingController(text: '12');
+    final TextEditingController delayCtrl = TextEditingController(text: '5');
+    final TextEditingController intervalCtrl = TextEditingController(text: '7');
+    DateTime firstDate = DateTime.now();
+
+    return showDialog<SimulatedAnime>(
+      context: context,
+      builder: (BuildContext context) {
+        return StatefulBuilder(
+          builder: (BuildContext context, StateSetter setLocalState) {
+            return AlertDialog(
+              title: const Text('创建模拟番剧'),
+              content: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: <Widget>[
+                    TextField(
+                      decoration: const InputDecoration(
+                        labelText: '标题',
+                        border: OutlineInputBorder(),
+                        isDense: true,
+                      ),
+                      controller: TextEditingController(text: title),
+                      onChanged: (v) => title = v,
+                    ),
+                    const SizedBox(height: 8),
+                    DropdownButtonFormField<String>(
+                      initialValue: weekday,
+                      decoration: const InputDecoration(
+                        labelText: '放送星期',
+                        border: OutlineInputBorder(),
+                        isDense: true,
+                      ),
+                      items: <String>[
+                        '星期一', '星期二', '星期三', '星期四', '星期五', '星期六', '星期日',
+                      ].map((w) => DropdownMenuItem<String>(
+                        value: w, child: Text(w),
+                      )).toList(),
+                      onChanged: (v) {
+                        if (v != null) setLocalState(() => weekday = v);
+                      },
+                    ),
+                    const SizedBox(height: 8),
+                    TextField(
+                      decoration: const InputDecoration(
+                        labelText: '放送时刻（如 22:00）',
+                        border: OutlineInputBorder(),
+                        isDense: true,
+                      ),
+                      controller: timeCtrl,
+                    ),
+                    const SizedBox(height: 8),
+                    TextField(
+                      decoration: const InputDecoration(
+                        labelText: '首集放送日期',
+                        border: OutlineInputBorder(),
+                        isDense: true,
+                      ),
+                      readOnly: true,
+                      controller: TextEditingController(
+                        text:
+                            '${firstDate.year}-${firstDate.month.toString().padLeft(2, '0')}-${firstDate.day.toString().padLeft(2, '0')}',
+                      ),
+                      onTap: () async {
+                        final DateTime? picked = await showDatePicker(
+                          context: context,
+                          initialDate: firstDate,
+                          firstDate: DateTime(2020),
+                          lastDate: DateTime(2030),
+                        );
+                        if (picked != null) {
+                          setLocalState(() => firstDate = picked);
+                        }
+                      },
+                    ),
+                    const SizedBox(height: 8),
+                    TextField(
+                      decoration: const InputDecoration(
+                        labelText: '总集数',
+                        border: OutlineInputBorder(),
+                        isDense: true,
+                      ),
+                      controller: totalCtrl,
+                      keyboardType: TextInputType.number,
+                    ),
+                    const SizedBox(height: 8),
+                    TextField(
+                      decoration: const InputDecoration(
+                        labelText: 'API 更新延迟（分钟）',
+                        border: OutlineInputBorder(),
+                        isDense: true,
+                      ),
+                      controller: delayCtrl,
+                      keyboardType: TextInputType.number,
+                    ),
+                    const SizedBox(height: 8),
+                    TextField(
+                      decoration: const InputDecoration(
+                        labelText: '集数间隔（天）',
+                        border: OutlineInputBorder(),
+                        isDense: true,
+                      ),
+                      controller: intervalCtrl,
+                      keyboardType: TextInputType.number,
+                    ),
+                  ],
+                ),
+              ),
+              actions: <Widget>[
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  child: const Text('取消'),
+                ),
+                FilledButton(
+                  onPressed: () {
+                    final RegExpMatch? timeMatch = RegExp(
+                      r'^(\d{1,2}):(\d{2})$',
+                    ).firstMatch(timeCtrl.text.trim());
+                    if (timeMatch == null) return;
+                    final int total = int.tryParse(totalCtrl.text) ?? 0;
+                    if (total <= 0) return;
+                    final int delay = int.tryParse(delayCtrl.text) ?? 5;
+                    final int interval = int.tryParse(intervalCtrl.text) ?? 7;
+                    final int nextId = DateTime.now().millisecondsSinceEpoch % 100000;
+                    Navigator.of(context).pop(SimulatedAnime(
+                      subjectId: 'debug_${nextId}_${DateTime.now().second}',
+                      title: title,
+                      weekdayJst: weekday,
+                      broadcastTimeJst: timeCtrl.text.trim(),
+                      firstEpisodeAirdate: firstDate,
+                      totalEpisodes: total,
+                      apiUpdateDelayMinutes: delay,
+                      episodeIntervalDays: interval,
+                    ));
+                  },
+                  child: const Text('创建'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
   }
 }
