@@ -59,6 +59,10 @@ app.*.map.json
 /cache.db
 /clash_config.yaml
 /sub_provider.yaml
+/app_state.json
+/calendar_cache.json
+/watch_archive.json
+/startup_error.log
 
 # Claude Code config
 /.claude/
