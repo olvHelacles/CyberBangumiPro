@@ -695,6 +695,11 @@ class _BangumiHomePageState extends State<BangumiHomePage>
     if (_settingApiUserAgent == 'OlvSilence/my-private-project') {
       _settingApiUserAgent = appUserAgent;
     }
+    // Update UA version if it doesn't match the current app version.
+    if (_settingApiUserAgent.startsWith('olvHelacles/CyberBangumiPro/') &&
+        _settingApiUserAgent != appUserAgent) {
+      _settingApiUserAgent = appUserAgent;
+    }
     _settingThemeMode = themeModeFromStorageValue(
       (jsonMap[themeModeSettingKey] as String? ?? ''),
     );
