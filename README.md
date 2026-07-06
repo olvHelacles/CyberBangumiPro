@@ -10,29 +10,29 @@ CyberBangumi Pro 是一个基于 Flutter 的 Windows 桌面端番剧日历与追
 ## 界面
 
 四个主标签页：
-<img alt="GUI" src="./docs/imgs/gui1.png" width = "512">
-
 ### 1.**今日更新** — 当天放送番剧，快速关注/取消关注
 
-<img alt="GUI" src="./docs/imgs/gui2.png">
+<img alt="GUI" src="./docs/imgs/gui1.png" width = "700">
 
 ### 2.**我的关注** — 已关注番剧及进度，支持手动修正。分为两个子模式：
   - **追番** — 当季正在播出的番剧，按最近有更新的排在前
   - **补番** — 已完结的番剧，支持手动前进/后退集数，按最近修改补番进度的时间排序（延迟生效）
 
-<img alt="GUI" src="./docs/imgs/gui3.png">
+<img alt="GUI" src="./docs/imgs/gui2.png">
 
 ### 3.**番剧周历** — 按星期查看放送分布
 
-<img alt="GUI" src="./docs/imgs/gui4.png">
+<img alt="GUI" src="./docs/imgs/gui3.png">
 
 ### 4.**番剧搜索** — 搜索条目，分页翻页。支持两个模式：
   - **搜索模式** — 输入关键词搜索，默认按收藏人数排序。支持多维过滤器。
   - **浏览模式** — 隐藏搜索框，一次展示全部条目，配合多维过滤器（分类、地区、播出年份、最低评分、评分人数、标签）和排序（收藏数/评分）实现榜单浏览。
+<img alt="GUI" src="./docs/imgs/gui4.png">
 
-<img alt="Gui2" src="./docs/imgs/ui_detail-page.png">
+### 5.点击任意封面弹出详情面板，包含评分分布、制作信息、剧情简介、关注按钮等。
 
-点击任意封面弹出详情面板，包含评分分布、制作信息、剧情简介、关注按钮等。
+<img alt="Gui2" src="./docs/imgs/ui_detail-page.png" width = "700">
+
 
 ## 主要功能
 
