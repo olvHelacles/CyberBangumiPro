@@ -60,9 +60,6 @@ app.*.map.json
 /clash_config.yaml
 /sub_provider.yaml
 
-# Extracted clash binary (asset is tracked via LFS)
-/mihomo.exe
-
 # Claude Code config
 /.claude/
 
@@ -74,6 +71,3 @@ app.*.map.json
 *_debug.txt
 extract_*.py
 call_site_*.txt
-
-# Clash core binary (bundled via pubspec.yaml assets, not tracked in git)
-/assets/mihomo.exe

@@ -1,6 +1,9 @@
 /// 全局常量
 /// ─────────────────────────────────────────────
 
+/// Current app version, kept in sync with pubspec.yaml.
+const String appVersion = '0.7.1';
+
 // URLs
 const String bgmlistArchiveBaseUrl = 'https://bgmlist.com/archive';
 const String bangumiApiBaseUrl = 'https://api.bgm.tv';
@@ -24,6 +27,7 @@ const String catchUpProgressStorageKey = 'catch_up_progress_v1';
 const String catchUpTotalEpsStorageKey = 'catch_up_total_eps_v1';
 const String catchUpTitlesStorageKey = 'catch_up_titles_v1';
 const String watchlistLastUpdatedStorageKey = 'watchlist_last_updated_v1';
+const String watchlistLastAiredEpStorageKey = 'watchlist_last_aired_ep_v1';
 const String timezoneConversionEnabledSettingKey =
     'timezone_conversion_enabled';
 const String timezoneOffsetMinutesSettingKey = 'timezone_offset_minutes';
@@ -34,7 +38,7 @@ const String proxySubscriptionUrlSettingKey = 'proxy_subscription_url';
 const String proxyBypassSettingKey = 'proxy_bypass';
 
 // User-Agents
-const String appUserAgent = 'OlvSilence/my-private-project';
+const String appUserAgent = 'olvHelacles/CyberBangumiPro/$appVersion (https://github.com/olvHelacles/CyberBangumiPro)';
 const String browserUserAgent =
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
     '(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';

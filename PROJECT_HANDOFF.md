@@ -1,4 +1,4 @@
-# CyberBangumi Pro v0.7.0 项目实现与约定（单文件交接）
+# CyberBangumi Pro v0.7.1 项目实现与约定（单文件交接）
 
 本文件用于在新对话窗口中快速恢复项目上下文，覆盖当前实现、约定、数据结构和后续改动注意事项。
 
@@ -104,6 +104,8 @@ _bootstrap 顺序（runApp 后）:
 - 补充数据源: bgmlist.com/api/v1/bangumi/onair（一年内开播 + Bangumi API 验证在播）。
 - 支持本地缓存优先，必要时网络刷新。
 - 每月 1 号可自动触发一次网络刷新。
+- 日历缓存（calendar_cache.json）从 v0.7.0 起支持新版格式：{"schedule": [...], "startDates": {"id": "ISO8601", ...}}，旧版平铺列表格式向下兼容。
+- startDates（开播日期）随日历缓存持久化，缓存加载时从文件恢复，用于过滤今日更新中尚未开播的条目。
 - 刷新后调用 _archiveMissingWatchlistItemsAfterCalendar。
 - isSubjectStillAiring 在 _checkSubjectStillAiring 层统一调用 _waitForRequestSlot() 节流。
 
@@ -187,10 +189,19 @@ _applyScheduleData()                →  UI 刷新
 
 ### 4.9 关注页排序
 
-- 追番/补番统一使用 _watchlistLastUpdated 时间戳降序排列。
-- 时间戳在进度刷新、补番前进/后退时更新。
+- 追番/补番统一使用 _watchlistLastUpdated 时间戳降序排列（稳定排序，同时间戳保持关注列表原始顺序）。
+- 追番排序基于持久化的 latestAiredEp 基准（_watchlistLastAiredEp，持久化到 app_state.json watchlist_last_aired_ep_v1 字段）。
+  - 每次启动：加载持久化基准 → API 返回 latestAiredEp，只有 newEp > 基准才更新时间戳 → 提到列表顶部。
+  - 如果无新集，时间戳保持不变 → 条目保持原相对顺序。
+- 定时后台检查（_periodicCheckTimer，每 120 秒）：
+  - 遍历周历中有关注的番剧，将 JST 放送时刻转为显示时区。
+  - 当前时间在"放送后 +2 到 +15 分钟"窗口内 → 调用 _refreshProgress(onlySubjectIds: [...])。
+  - 有新集数 → 自动更新时间戳 → 提到顶部。
+  - 启动时在 _bootstrap() 末尾启动，dispose 时清理。
 - 补番操作的排序更新延迟生效（_sortFrozen 冻结机制），下次 build 触发时刷新顺序。
 - 时间戳持久化到 app_state.json（watchlist_last_updated_v1 字段）。
+
+**已知限制**：定时检测依赖番表放送时刻，若番表无放送时刻（updateTime 为空）则不会自动触发；此时需手动刷新进度。
 
 ### 4.10 补番条目进度
 
@@ -221,17 +232,19 @@ app_settings_v1 字段（完整）:
 - progress_corrections_v1 / progress_correction_deltas_v1 / correction_base_v1: 手动进度修正
 - catch_up_progress_v1 / catch_up_total_eps_v1 / catch_up_titles_v1: 补番进度
 - watchlist_last_updated_v1: 关注列表排序时间戳
+- watchlist_last_aired_ep_v1: 追番排序 latestAiredEp 基准（map of subjectId → int）
 - watchlist: 关注列表
 - calendar_auto_refresh_month / calendar_cache_timezone_token_v1: 日历缓存控制
 
 ### 5.2 watch_archive.json / calendar_cache.json
 
-无变化。
+- watch_archive.json: 无变化。
+- calendar_cache.json: 从 v0.7.0 起支持新版封装格式 {"schedule": [...], "startDates": {"id": "ISO8601", ...}}。旧版平铺列表格式向下兼容。startDates 在缓存加载时恢复，用于过滤尚未开播的条目不出现在今日更新中。
 
 ## 6. 重要约定与不变量
 
 1. 所有业务数据持久化在 Directory.current（exe 所在目录）。
-2. API UA 与页面抓取 UA 分离。
+2. API UA（`appUserAgent`）与页面抓取 UA（`browserUserAgent`）分离。`appUserAgent` 自动引用 `appVersion`，格式为 `olvHelacles/CyberBangumiPro/{version} (https://github.com/olvHelacles/CyberBangumiPro)`，符合 Bangumi API 的 UA 要求。
 3. 进度来源优先 Bangumi API。
 4. 修改关注/周历逻辑时保证 _scheduleData 与缓存回填一致。
 5. mihomo.exe 在首次运行时从 Flutter assets 提取到工作目录。
@@ -262,6 +275,9 @@ app_settings_v1 字段（完整）:
 - **评分分布柱状图重构**：CustomPaint → Row+Container，删除底部标注，添加悬停浮层（X分, XX人）。
 - **分集评论柱状图强化**：悬停浮层增加集数显示（第X集, 评论XXX）。
 - **关注页排序重构**：统一时间戳排序，补番排序延迟生效，时间戳持久化。
+- **追番排序修复 v3**：新增持久化 latestAiredEp 基准（_watchlistLastAiredEp），跨会话通过持久化基准对比判断是否有新集，避免内存缓存清空导致的误判。进入浏览模式默认应用 TV/日本/≥100人 过滤器。
+- **准时追番检测**：新增 _periodicCheckTimer（每 120 秒），扫描番表放送时刻，在放送后 +2~15 分钟内自动刷新进度、将有新集的番提到顶部。
+- **日历缓存格式升级**：calendar_cache.json 支持新版封装格式（含 startDates），加载时恢复开播日期以过滤未开播条目不出现在今日更新中。旧版平铺格式向下兼容。
 - **AppBar 远程背景图超时**：新增 AppBarRemoteImage widget，直连 + 8s 超时。
 
 ## 9. 后续改动清单
@@ -273,13 +289,15 @@ app_settings_v1 字段（完整）:
 5. 提交前至少执行 flutter analyze 与目标测试。
 6. 修改搜索相关逻辑时，注意 BangumiService.searchSubjects 的 sort/filter 参数。
 7. 修改 _allItems/_todayItems/_watchlist/_scheduleData 时别忘了同步 _rebuildAllIndices()。
+8. 修改日历缓存格式时注意向后兼容（CalendarCacheManager.load 支持新旧两种格式）。
+9. 定时检测（_periodicCheckTimer）依赖番表放送时刻，番表无 updateTime 的条目不会自动触发检测。
 
 ## 10. 新会话接力模板
 
 请先阅读项目根目录的 PROJECT_HANDOFF.md，然后在不改变既有约定的前提下继续开发。
 必须遵守:
 1. 业务数据持久化保持在 exe 所在目录（Directory.current）。
-2. API UA 可配置，但页面抓取与图片请求继续使用固定 browserUserAgent。
+2. API UA 可配置（默认 `olvHelacles/CyberBangumiPro/{version} (...)`），但页面抓取与图片请求继续使用固定 browserUserAgent。
 3. 手动修正进度逻辑不得回退。
 4. 修改代理/Clash 逻辑时保证 ClashManager 生命周期与 app 一致。
 5. 窗口关闭时必须同步终止 mihomo 进程（ClashManager.kill()）。

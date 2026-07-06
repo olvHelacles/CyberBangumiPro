@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../clash_manager.dart';
 import '../models/broadcast_types.dart';
+import '../services/update_manager.dart';
 
 // ---------------------------------------------------------------------------
 // Helper functions
@@ -68,7 +69,8 @@ class SettingsData {
   }) {
     return SettingsData(
       progressConcurrency: progressConcurrency ?? this.progressConcurrency,
-      coverCacheConcurrency: coverCacheConcurrency ?? this.coverCacheConcurrency,
+      coverCacheConcurrency:
+          coverCacheConcurrency ?? this.coverCacheConcurrency,
       apiUserAgent: apiUserAgent ?? this.apiUserAgent,
       themeMode: themeMode ?? this.themeMode,
       appBarBackgroundImageEnabled:
@@ -77,7 +79,8 @@ class SettingsData {
           appBarBackgroundImagePath ?? this.appBarBackgroundImagePath,
       timezoneConversionEnabled:
           timezoneConversionEnabled ?? this.timezoneConversionEnabled,
-      timezoneOffsetMinutes: timezoneOffsetMinutes ?? this.timezoneOffsetMinutes,
+      timezoneOffsetMinutes:
+          timezoneOffsetMinutes ?? this.timezoneOffsetMinutes,
       proxyEnabled: proxyEnabled ?? this.proxyEnabled,
       proxySubscriptionUrl: proxySubscriptionUrl ?? this.proxySubscriptionUrl,
     );
@@ -91,6 +94,7 @@ class SettingsData {
 class SettingsDialog extends StatefulWidget {
   final SettingsData initialData;
   final List<int> commonTimezoneOffsets;
+  final String currentVersion;
   final VoidCallback onOpenWatchArchive;
   final VoidCallback onClearCoverCache;
 
@@ -98,6 +102,7 @@ class SettingsDialog extends StatefulWidget {
     super.key,
     required this.initialData,
     required this.commonTimezoneOffsets,
+    required this.currentVersion,
     required this.onOpenWatchArchive,
     required this.onClearCoverCache,
   });
@@ -118,6 +123,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
   late bool _tempProxyEnabled;
   late String _tempProxySubscriptionUrl;
   late TextEditingController _subscriptionCtrl;
+  String _updateStatus = '';
 
   @override
   void initState() {
@@ -143,22 +149,75 @@ class _SettingsDialogState extends State<SettingsDialog> {
   }
 
   void _confirm() {
-    Navigator.of(context).pop(SettingsData(
-      progressConcurrency: _tempProgressConcurrency,
-      coverCacheConcurrency: _tempCoverCacheConcurrency,
-      apiUserAgent: _tempApiUserAgent,
-      themeMode: _tempThemeMode,
-      appBarBackgroundImageEnabled: _tempAppBarBackgroundImageEnabled,
-      appBarBackgroundImagePath: _tempAppBarBackgroundImagePath,
-      timezoneConversionEnabled: _tempTimezoneConversionEnabled,
-      timezoneOffsetMinutes: _tempTimezoneOffsetMinutes,
-      proxyEnabled: _tempProxyEnabled,
-      proxySubscriptionUrl: _tempProxySubscriptionUrl,
-    ));
+    Navigator.of(context).pop(
+      SettingsData(
+        progressConcurrency: _tempProgressConcurrency,
+        coverCacheConcurrency: _tempCoverCacheConcurrency,
+        apiUserAgent: _tempApiUserAgent,
+        themeMode: _tempThemeMode,
+        appBarBackgroundImageEnabled: _tempAppBarBackgroundImageEnabled,
+        appBarBackgroundImagePath: _tempAppBarBackgroundImagePath,
+        timezoneConversionEnabled: _tempTimezoneConversionEnabled,
+        timezoneOffsetMinutes: _tempTimezoneOffsetMinutes,
+        proxyEnabled: _tempProxyEnabled,
+        proxySubscriptionUrl: _tempProxySubscriptionUrl,
+      ),
+    );
   }
 
   void _cancel() {
     Navigator.of(context).pop();
+  }
+
+  Future<void> _checkAndApplyUpdate() async {
+    setState(() => _updateStatus = '正在检查更新...');
+    final UpdateInfo? info = await UpdateManager.checkForUpdate(
+      widget.currentVersion,
+    );
+    if (info == null) {
+      if (mounted) setState(() => _updateStatus = '检查更新失败（网络错误）');
+      return;
+    }
+    if (!info.hasUpdate) {
+      if (mounted) {
+        setState(() => _updateStatus = '已是最新版本 ${widget.currentVersion}');
+      }
+      return;
+    }
+    if (!mounted) return;
+    final bool? proceed = await showDialog<bool>(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: Text('发现新版本 ${info.latestVersion}'),
+          content: const Text('是否下载并应用更新？应用更新后软件将自动关闭并重启。'),
+          actions: <Widget>[
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              child: const Text('更新'),
+            ),
+          ],
+        );
+      },
+    );
+    if (proceed != true) return;
+
+    setState(() => _updateStatus = '正在下载更新...');
+    try {
+      final String zipPath = await UpdateManager.downloadUpdate(
+        info.downloadUrl,
+      );
+      setState(() => _updateStatus = '正在应用更新...');
+      await UpdateManager.applyUpdate(zipPath);
+    } catch (e) {
+      if (mounted) {
+        setState(() => _updateStatus = '更新失败: $e');
+      }
+    }
   }
 
   @override
@@ -171,6 +230,8 @@ class _SettingsDialogState extends State<SettingsDialog> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: <Widget>[
+              // ── Top spacing ──
+              const SizedBox(height: 8),
               // ── Theme mode ──
               DropdownButtonFormField<ThemeMode>(
                 initialValue: _tempThemeMode,
@@ -178,16 +239,17 @@ class _SettingsDialogState extends State<SettingsDialog> {
                   labelText: '主题模式',
                   border: OutlineInputBorder(),
                 ),
-                items: const <ThemeMode>[
-                  ThemeMode.system,
-                  ThemeMode.light,
-                  ThemeMode.dark,
-                ].map((ThemeMode mode) {
-                  return DropdownMenuItem<ThemeMode>(
-                    value: mode,
-                    child: Text(themeModeDisplayText(mode)),
-                  );
-                }).toList(),
+                items:
+                    const <ThemeMode>[
+                      ThemeMode.system,
+                      ThemeMode.light,
+                      ThemeMode.dark,
+                    ].map((ThemeMode mode) {
+                      return DropdownMenuItem<ThemeMode>(
+                        value: mode,
+                        child: Text(themeModeDisplayText(mode)),
+                      );
+                    }).toList(),
                 onChanged: (ThemeMode? value) {
                   if (value == null) return;
                   setState(() {
@@ -215,8 +277,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
                 decoration: const InputDecoration(
                   border: OutlineInputBorder(),
                   labelText: 'AppBar/TabBar 背景图路径',
-                  hintText:
-                      '例如 assets/images/appbar_bg.png 或 C:/path/bg.png',
+                  hintText: '例如 assets/images/appbar_bg.png 或 C:/path/bg.png',
                 ),
                 onChanged: (String value) {
                   setState(() {
@@ -239,8 +300,9 @@ class _SettingsDialogState extends State<SettingsDialog> {
                 label: '$_tempProgressConcurrency',
                 onChanged: (double value) {
                   setState(() {
-                    _tempProgressConcurrency =
-                        _clampProgressConcurrency(value.round());
+                    _tempProgressConcurrency = _clampProgressConcurrency(
+                      value.round(),
+                    );
                   });
                 },
               ),
@@ -258,8 +320,9 @@ class _SettingsDialogState extends State<SettingsDialog> {
                 label: '$_tempCoverCacheConcurrency',
                 onChanged: (double value) {
                   setState(() {
-                    _tempCoverCacheConcurrency =
-                        _clampCoverCacheConcurrency(value.round());
+                    _tempCoverCacheConcurrency = _clampCoverCacheConcurrency(
+                      value.round(),
+                    );
                   });
                 },
               ),
@@ -325,8 +388,8 @@ class _SettingsDialogState extends State<SettingsDialog> {
                     child: Text(
                       ClashManager.instance.isRunning
                           ? (ClashManager.instance.currentNode.isNotEmpty
-                              ? '${ClashManager.instance.currentNode}  ${ClashManager.instance.currentLatency}ms'
-                              : 'Clash: 未就绪')
+                                ? '${ClashManager.instance.currentNode}  ${ClashManager.instance.currentLatency}ms'
+                                : 'Clash: 未就绪')
                           : 'Clash: 未就绪',
                       style: const TextStyle(fontSize: 13),
                       overflow: TextOverflow.ellipsis,
@@ -382,6 +445,20 @@ class _SettingsDialogState extends State<SettingsDialog> {
               ),
               const Divider(height: 24),
 
+              // ── Update ──
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: const Icon(Icons.system_update_outlined),
+                title: const Text('检查更新'),
+                subtitle: Text(
+                  _updateStatus.isNotEmpty
+                      ? _updateStatus
+                      : '当前版本 ${widget.currentVersion}',
+                ),
+                onTap: _checkAndApplyUpdate,
+              ),
+              const Divider(height: 24),
+
               // ── API User-Agent ──
               Align(
                 alignment: Alignment.centerLeft,
@@ -418,14 +495,8 @@ class _SettingsDialogState extends State<SettingsDialog> {
           icon: const Icon(Icons.delete_sweep_outlined),
           label: const Text('清除封面缓存'),
         ),
-        TextButton(
-          onPressed: _cancel,
-          child: const Text('取消'),
-        ),
-        FilledButton(
-          onPressed: _confirm,
-          child: const Text('保存'),
-        ),
+        TextButton(onPressed: _cancel, child: const Text('取消')),
+        FilledButton(onPressed: _confirm, child: const Text('保存')),
       ],
     );
   }

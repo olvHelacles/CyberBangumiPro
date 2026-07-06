@@ -350,6 +350,8 @@ class _BangumiHomePageState extends State<BangumiHomePage>
   Map<String, int> _catchUpProgress = <String, int>{};
   Map<String, int> _catchUpTotalEps = <String, int>{};
   Map<String, DateTime> _watchlistLastUpdated = <String, DateTime>{};
+  Map<String, int> _watchlistLastAiredEp = <String, int>{};
+  Timer? _periodicCheckTimer;
   Map<String, Map<int, String>> _catchUpTitles = <String, Map<int, String>>{};
   Set<String> _selectedIds = <String>{};
   int? _debugWeekdayOverride;
@@ -408,6 +410,7 @@ class _BangumiHomePageState extends State<BangumiHomePage>
     _service.onNetworkLog = null;
     _service.activeRequests.removeListener(_onNetworkActivityChanged);
     _service.dispose();
+    _periodicCheckTimer?.cancel();
     _networkIndicatorHideTimer?.cancel();
     _statusTextTimer?.cancel();
     _searchController.dispose();
@@ -542,6 +545,7 @@ class _BangumiHomePageState extends State<BangumiHomePage>
 
     await _refreshProgressFromMainAction();
     _appendDebugLog('初始化完成');
+    _startPeriodicCheck();
   }
 
   Future<void> _refreshProgressFromMainAction() async {
@@ -554,6 +558,8 @@ class _BangumiHomePageState extends State<BangumiHomePage>
       return;
     }
     await _refreshProgressFromMainAction();
+    _periodicCheckTimer?.cancel();
+    _startPeriodicCheck();
   }
 
   int _clampProgressConcurrency(int value) {
@@ -685,6 +691,10 @@ class _BangumiHomePageState extends State<BangumiHomePage>
     );
     _settingApiUserAgent =
         (jsonMap['api_user_agent'] as String? ?? appUserAgent).trim();
+    // Migrate legacy hardcoded UA to the new format.
+    if (_settingApiUserAgent == 'OlvSilence/my-private-project') {
+      _settingApiUserAgent = appUserAgent;
+    }
     _settingThemeMode = themeModeFromStorageValue(
       (jsonMap[themeModeSettingKey] as String? ?? ''),
     );
@@ -897,6 +907,24 @@ class _BangumiHomePageState extends State<BangumiHomePage>
       }
     } catch (_) {}
     _watchlistLastUpdated = lastMod;
+
+    // Load watchlist last-aired-ep baseline (for sort-timestamp decisions).
+    final String lastAiredRaw = jsonEncode(
+      state[watchlistLastAiredEpStorageKey] ?? <String, dynamic>{},
+    );
+    final Map<String, int> lastAired = <String, int>{};
+    try {
+      final dynamic decodedLastAired = jsonDecode(lastAiredRaw);
+      if (decodedLastAired is Map<String, dynamic>) {
+        decodedLastAired.forEach((String sid, dynamic value) {
+          final int? parsed = (value as num?)?.toInt();
+          if (sid.isNotEmpty && parsed != null && parsed > 0) {
+            lastAired[sid] = parsed;
+          }
+        });
+      }
+    } catch (_) {}
+    _watchlistLastAiredEp = lastAired;
   }
 
   Future<void> _saveProgressCorrections() async {
@@ -927,6 +955,8 @@ class _BangumiHomePageState extends State<BangumiHomePage>
         sid, dt.toIso8601String(),
       ),
     );
+    state[watchlistLastAiredEpStorageKey] =
+        Map<String, dynamic>.from(_watchlistLastAiredEp);
     await _appStateStore.writeState(state);
     _manualProgressCorrections = sanitizedDelta;
     _progressCorrectionMigrationDirty = false;
@@ -1055,6 +1085,7 @@ class _BangumiHomePageState extends State<BangumiHomePage>
             proxySubscriptionUrl: _settingProxySubscriptionUrl,
           ),
           commonTimezoneOffsets: commonTimezoneOffsets,
+          currentVersion: appVersion,
           onOpenWatchArchive: () {
             Navigator.of(context).pop();
             _openWatchArchiveDialog();
@@ -1548,6 +1579,12 @@ class _BangumiHomePageState extends State<BangumiHomePage>
       if (!forceNetwork && !needAutoNetwork && cacheTimezoneMatched) {
         final List<DaySchedule> cachedSchedule = await _calendarCacheManager
             .load();
+        // Restore subject start dates from cache (used to filter today items).
+        final Map<String, DateTime> cachedStartDates =
+            await _calendarCacheManager.loadStartDates();
+        if (_service.subjectStartDates.isEmpty && cachedStartDates.isNotEmpty) {
+          _service.seedSubjectStartDates(cachedStartDates);
+        }
         if (cachedSchedule.isNotEmpty) {
           if (!mounted) {
             return;
@@ -1585,7 +1622,8 @@ class _BangumiHomePageState extends State<BangumiHomePage>
       }
       final List<DaySchedule> mergedSchedule =
           _convertScheduleFromJstForDisplay(enrichedJst);
-      await _calendarCacheManager.save(mergedSchedule);
+      await _calendarCacheManager.saveWithStartDates(
+        mergedSchedule, _service.subjectStartDates);
       await _saveCalendarCacheTimezoneToken();
 
       if (needAutoNetwork) {
@@ -1615,6 +1653,12 @@ class _BangumiHomePageState extends State<BangumiHomePage>
       try {
         final List<DaySchedule> cachedSchedule = await _calendarCacheManager
             .load();
+        // Restore start dates even on fallback path.
+        final Map<String, DateTime> fallbackStartDates =
+            await _calendarCacheManager.loadStartDates();
+        if (_service.subjectStartDates.isEmpty && fallbackStartDates.isNotEmpty) {
+          _service.seedSubjectStartDates(fallbackStartDates);
+        }
         if (cachedSchedule.isNotEmpty) {
           if (!mounted) {
             return;
@@ -2502,13 +2546,27 @@ class _BangumiHomePageState extends State<BangumiHomePage>
         return;
       }
 
+      // Capture old progress BEFORE setState overwrites the cache.
+      final SubjectProgress? previousProgress = _rawProgressCache[sid];
+      final int? previousAiredEp = _watchlistLastAiredEp[sid];
+
       setState(() {
         _rawProgressCache[sid] = rawProgress;
         _progressCache[sid] = progress;
         _progressRefreshDone = processed;
-        // Update watchlist sort order timestamp when progress is refreshed.
+        // Only update sort timestamp when a new episode has aired.
         if (watchTargets.containsKey(sid)) {
-          _watchlistLastUpdated[sid] = DateTime.now();
+          final int? newEp = rawProgress.latestAiredEp;
+          final bool hasNewEpisode = newEp != null && newEp > 0 &&
+              (previousProgress == null
+                  ? (previousAiredEp != null && newEp > previousAiredEp)
+                  : newEp > (previousProgress.latestAiredEp ?? 0));
+          if (hasNewEpisode) {
+            _watchlistLastUpdated[sid] = DateTime.now();
+          }
+          if (newEp != null && newEp > 0) {
+            _watchlistLastAiredEp[sid] = newEp;
+          }
         }
         // Cache total episodes for catch-up items so they survive restart.
         final int? totalEps = rawProgress.totalEpsDeclared ?? rawProgress.totalEpsListed;
@@ -2552,12 +2610,71 @@ class _BangumiHomePageState extends State<BangumiHomePage>
     if (_progressCorrectionMigrationDirty) {
       await _saveProgressCorrections();
     }
+    // Persist watchlist last-aired-ep baseline for next-launch sort decisions.
+    await _saveProgressCorrections();
 
     setState(() {
       _isLoadingProgress = false;
       _progressRefreshDone = _progressRefreshTotal;
     });
     _showStatus('进度已更新');
+  }
+
+  void _startPeriodicCheck() {
+    _periodicCheckTimer?.cancel();
+    _periodicCheckTimer = Timer.periodic(
+      const Duration(seconds: 120),
+      (_) => _checkRecentlyAiredShows(),
+    );
+  }
+
+  Future<void> _checkRecentlyAiredShows() async {
+    if (_isLoadingProgress || _isLoadingSchedule) return;
+    if (_scheduleData.isEmpty || _selectedIds.isEmpty) return;
+
+    final DateTime now = DateTime.now();
+    final int displayOffset = _effectiveDisplayTimezoneOffsetMinutes;
+    final Set<String> toCheck = <String>{};
+
+    for (final DaySchedule day in _scheduleData) {
+      for (final SubjectItem item in day.items) {
+        if (item.subjectId.isEmpty || item.updateTime.isEmpty) continue;
+        if (!_selectedIds.contains(item.subjectId)) continue;
+
+        final ConvertedWeekdayTime? ct =
+            BroadcastTimeConverter.convertWeekdayAndTime(
+          weekday: day.weekday,
+          time: item.updateTime,
+          fromOffsetMinutes: BroadcastTimeConverter.jstOffsetMinutes,
+          toOffsetMinutes: displayOffset,
+        );
+        if (ct == null) continue;
+
+        final int? wi = BroadcastTimeConverter.weekdayToIndex(ct.weekday);
+        final int? minutes =
+            BroadcastTimeConverter.parseClockMinutes(ct.time);
+        if (wi == null || minutes == null) continue;
+
+        DateTime broadcast = DateTime(
+          now.year, now.month, now.day,
+          minutes ~/ 60, minutes % 60,
+        );
+        final int diff = wi - now.weekday;
+        if (diff != 0) {
+          broadcast = broadcast.add(Duration(days: diff));
+        }
+        if (broadcast.isAfter(now)) continue;
+
+        final int elapsed = now.difference(broadcast).inMinutes;
+        if (elapsed >= 2 && elapsed <= 15) {
+          toCheck.add(item.subjectId);
+        }
+      }
+    }
+
+    if (toCheck.isNotEmpty) {
+      _refreshProgress(onlySubjectIds: toCheck);
+    }
   }
 
   Future<void> _showSubjectDetail(SubjectItem item) async {
@@ -2748,6 +2865,7 @@ class _BangumiHomePageState extends State<BangumiHomePage>
         return buildFallback();
       }
       return AppBarRemoteImage(
+        key: ValueKey<String>(source),
         uri: uri,
         fit: _appBarBackgroundImageFit,
         cacheWidth: cacheWidth,

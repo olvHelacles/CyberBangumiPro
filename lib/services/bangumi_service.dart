@@ -60,6 +60,11 @@ class BangumiService {
   final Map<String, DateTime> _subjectStartDates;
   Map<String, DateTime> get subjectStartDates =>
       Map<String, DateTime>.unmodifiable(_subjectStartDates);
+
+  /// Populate subject start dates from external source (e.g. cache).
+  void seedSubjectStartDates(Map<String, DateTime> dates) {
+    _subjectStartDates.addAll(dates);
+  }
   bool allowInsecureTlsFallback = true;
   bool? _apiAvailableCache;
   DateTime? _apiAvailableCheckedAt;
