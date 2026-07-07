@@ -305,8 +305,27 @@ app_settings_v1 字段（完整）:
 5. 窗口关闭时必须同步终止 mihomo 进程（ClashManager.kill()）。
 6. 修改 _allItems 等列表后必须同步调用 _rebuildAllIndices()。
 
-## 11. Release 构建
+## 11. Release 构建与 Changelog 流程
 
+### Release 构建
 - 运行 `powershell -File build_release.ps1` 自动完成构建 + 打包 ZIP。
 - 输出: `release\cyberbangumi_pro-v{version}-windows-x64.zip`。
 - 构建过程中自动清理运行时文件（app_state.json 等），首次启动以默认值运行。
+
+### Changelog 管理
+
+每次代码修改后（仅限 `.dart` 文件改动，不包括项目文档/配置文件），将改动摘要追加到 `release/CHANGELOG_new.md`。
+
+**构建 release 包前的 changelog 流程：**
+
+1. 读取 `release/CHANGELOG_new.md` 中的逐条记录
+2. 整理归类（新增/改进/修复），精简为用户可读的 release note
+3. 写入 `release/CHANGELOG-v{version}.md`
+4. 删除 `release/CHANGELOG_new.md` 并新建一个空白的同名文件（等待下一个开发周期的记录）
+
+记录格式示例（每行一条）：
+```
+feat: 搜索页浏览模式
+fix: 追番首集未触发排序更新
+refactor: 提取 _parseUpdateTimeMinutes 到 constants
+```
